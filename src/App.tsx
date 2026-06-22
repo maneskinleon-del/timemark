@@ -31,6 +31,13 @@ export default function App() {
     city: "PEÑAFLOR",
     timestamp: ""
   });
+
+  // Ref para acceder siempre al valor actualizado de location dentro de callbacks
+  const locationRef = useRef(location);
+  useEffect(() => {
+    locationRef.current = location;
+  }, [location]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
@@ -45,6 +52,11 @@ export default function App() {
   const [editDate, setEditDate] = useState('');
   const [editTime, setEditTime] = useState('');
   const [customTimestamp, setCustomTimestamp] = useState<string | null>(null);
+  const customTimestampRef = useRef<string | null>(null);
+  useEffect(() => {
+    customTimestampRef.current = customTimestamp;
+  }, [customTimestamp]);
+
   const [imageQueue, setImageQueue] = useState<File[]>([]);
   const [settings, setSettings] = useState({
     strictDarkMode: true,
@@ -75,7 +87,6 @@ export default function App() {
           const lat = position.coords.latitude;
           const lng = position.coords.longitude;
           
-          // Format to rough degrees/minutes/seconds for the mock look
           const latDir = lat >= 0 ? 'N' : 'S';
           const lngDir = lng >= 0 ? 'E' : 'W';
           const formatCoord = (val: number) => {
@@ -98,29 +109,46 @@ export default function App() {
     }
   }, []);
 
-  // Use Effect to handle real-time drawing when dependencies change
+  // useEffect SOLO para redibujar cuando cambia logo o ubicación manualmente
+  // NO incluir originalImage ni timestamp para evitar doble llamada y condición de carrera
   useEffect(() => {
     if (originalImage) {
-      drawWatermark(originalImage, logoImage, location);
+      drawWatermark(originalImage, logoImage, locationRef.current);
     }
-  }, [originalImage, logoImage, location.timestamp, location.coords, location.address]);
+  }, [logoImage, location.coords, location.address]);
+
+  const buildTimestamp = (): string => {
+    const ts = customTimestampRef.current;
+    if (ts) {
+      const parts = ts.split(':');
+      if (parts.length >= 2) {
+        const randomSecs = String(Math.floor(Math.random() * 60)).padStart(2, '0');
+        return `${parts[0]}:${parts[1]}:${randomSecs}`;
+      }
+      return ts;
+    }
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${now.toLocaleTimeString('en-US', { hour12: false })}`;
+  };
 
   const processFile = (file: File) => {
     const reader = new FileReader();
     reader.onload = (event) => {
-      setOriginalImage(event.target?.result as string);
-      let ts = customTimestamp;
-      if (ts) {
-        const parts = ts.split(':');
-        if (parts.length >= 2) {
-          const randomSecs = String(Math.floor(Math.random() * 60)).padStart(2, '0');
-          ts = `${parts[0]}:${parts[1]}:${randomSecs}`;
-        }
-      } else {
-        const now = new Date();
-        ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${now.toLocaleTimeString('en-US', { hour12: false })}`;
-      }
-      setLocation(prev => ({...prev, timestamp: ts as string}));
+      const imgSrc = event.target?.result as string;
+
+      // Calcular timestamp ANTES de cualquier setState para evitar condición de carrera
+      const ts = buildTimestamp();
+
+      // Construir location completa con el timestamp correcto
+      const updatedLocation = { ...locationRef.current, timestamp: ts };
+
+      // Actualizar estados
+      setOriginalImage(imgSrc);
+      setLocation(updatedLocation);
+
+      // Llamar drawWatermark directamente con los valores correctos,
+      // sin esperar el re-render de React
+      drawWatermark(imgSrc, logoImage, updatedLocation);
     };
     reader.readAsDataURL(file);
   };
@@ -156,10 +184,8 @@ export default function App() {
       canvas.width = img.width;
       canvas.height = img.height;
       
-      // Base scale on width to make it larger and more legible on big photos
       const scale = canvas.width / 1080;
 
-      // Draw original
       ctx.drawImage(img, 0, 0);
 
       // Top Left: "TIMEMARK SYSTEM"
@@ -168,7 +194,7 @@ export default function App() {
       const topRectHeight = 36 * scale;
       ctx.fillRect(24 * scale, 24 * scale, topRectWidth, topRectHeight);
       
-      ctx.fillStyle = '#ffb95f'; // secondary
+      ctx.fillStyle = '#ffb95f';
       ctx.fillRect(24 * scale, 24 * scale, 6 * scale, topRectHeight);
 
       ctx.font = `bold ${16 * scale}px "JetBrains Mono", monospace`;
@@ -179,10 +205,8 @@ export default function App() {
       const finishDrawing = (canvas: HTMLCanvasElement, logoImg: HTMLImageElement | null) => {
          const ctx = canvas.getContext('2d');
          if (!ctx) return;
-         // Recalculate scale inside closure
          const scale = canvas.width / 1080;
 
-         // Bottom dark overlay panel
          const panelHeight = 180 * scale;
          const panelWidth = Math.min(canvas.width * 0.9, 800 * scale);
          const panelX = 24 * scale;
@@ -196,24 +220,21 @@ export default function App() {
          ctx.roundRect(panelX, panelY, panelWidth, panelHeight, [0, 16 * scale, 16 * scale, 0]);
          ctx.fill();
          
-         ctx.shadowBlur = 0; // Reset shadow
+         ctx.shadowBlur = 0;
 
          ctx.fillStyle = '#ffb95f';
          ctx.fillRect(panelX, panelY, 6 * scale, panelHeight);
 
-         ctx.textBaseline = 'alphabetic'; // Reset baseline
+         ctx.textBaseline = 'alphabetic';
          
-         // Pin Icon & Coords
          ctx.fillStyle = '#ffb95f';
          ctx.font = `${24 * scale}px sans-serif`;
          ctx.fillText(`📍 ${loc.coords}`, panelX + 30 * scale, panelY + 50 * scale);
 
-         // Address
          ctx.fillStyle = 'white';
          ctx.font = `bold ${32 * scale}px "JetBrains Mono", monospace`;
          ctx.fillText(`${loc.address}, ${loc.city}`, panelX + 30 * scale, panelY + 100 * scale);
 
-         // Timestamp
          ctx.fillStyle = '#c6c6cd';
          ctx.font = `${20 * scale}px "JetBrains Mono", monospace`;
          ctx.fillText(`TIMESTAMP: ${loc.timestamp}`, panelX + 30 * scale, panelY + 145 * scale);
@@ -246,14 +267,12 @@ export default function App() {
 
             ctx.drawImage(logoImg, drawX, drawY, drawWidth, drawHeight);
 
-            // Status VERIFICADO
             ctx.fillStyle = '#ffb95f';
             ctx.font = `bold ${20 * scale}px "JetBrains Mono", monospace`;
             ctx.textAlign = 'right';
             ctx.fillText('VERIFICADO', logoX - 25 * scale, panelY + 145 * scale);
             ctx.textAlign = 'left';
          } else {
-            // Status
             ctx.fillStyle = '#ffb95f';
             ctx.font = `bold ${20 * scale}px "JetBrains Mono", monospace`;
             ctx.textAlign = 'right';
@@ -264,7 +283,6 @@ export default function App() {
          setPreviewImage(canvas.toDataURL('image/jpeg', 0.95));
       }
 
-      // Draw Logo if exists
       if (logoSrc) {
         const logo = new Image();
         logo.onload = () => {
@@ -452,7 +470,6 @@ export default function App() {
               <p className="text-on-surface-variant text-sm mb-4">{location.city}, RM</p>
               
               <div className="flex-1 rounded-lg bg-surface-container-highest relative overflow-hidden flex items-center justify-center min-h-[140px] mt-4">
-                {/* Real OSM Map Iframe instead of mock */}
                 <iframe
                   title="Current Location"
                   width="100%" 
@@ -689,7 +706,6 @@ export default function App() {
                 src={`https://maps.google.com/maps?q=${mapCoords.lat},${mapCoords.lng}&z=15&output=embed`}
                 style={{ border: 0, filter: 'contrast(1.1) brightness(0.9) sepia(0.2) hue-rotate(180deg) invert(0.1)', position: 'absolute', inset: 0 }}
               ></iframe>
-              {/* Marker overlay pointer */}
               <div className="absolute top-4 left-4 bg-surface-container/90 backdrop-blur-md p-4 rounded-lg border border-outline-variant/30 shadow-xl max-w-xs">
                 <p className="text-[10px] uppercase font-bold tracking-widest text-secondary mb-1">Última Posición</p>
                 <p className="text-on-surface text-sm font-bold truncate">{location.address}</p>
