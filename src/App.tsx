@@ -32,71 +32,69 @@ export default function App() {
     timestamp: ""
   });
 
-  // Ref para acceder siempre al valor actualizado de location dentro de callbacks
+  // Refs para leer siempre el valor actualizado dentro de callbacks asíncronos
   const locationRef = useRef(location);
-  useEffect(() => {
-    locationRef.current = location;
-  }, [location]);
+  useEffect(() => { locationRef.current = location; }, [location]);
+
+  const logoImageRef = useRef<string | null>(null);
+  useEffect(() => { logoImageRef.current = logoImage; }, [logoImage]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
+
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isTimeModalOpen, setIsTimeModalOpen] = useState(false);
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
-  const [editLocationDetails, setEditLocationDetails] = useState({
-    coords: '',
-    address: '',
-    city: ''
-  });
+  const [editLocationDetails, setEditLocationDetails] = useState({ coords: '', address: '', city: '' });
   const [editDate, setEditDate] = useState('');
   const [editTime, setEditTime] = useState('');
-  const [customTimestamp, setCustomTimestamp] = useState<string | null>(null);
-  const customTimestampRef = useRef<string | null>(null);
-  useEffect(() => {
-    customTimestampRef.current = customTimestamp;
-  }, [customTimestamp]);
 
-  const [imageQueue, setImageQueue] = useState<File[]>([]);
+  const customTimestampRef = useRef<string | null>(null);
+
+  // Cola de imágenes como REF (no estado) para que nextInQueue siempre vea el valor real
+  const imageQueueRef = useRef<File[]>([]);
+  const [imageQueueLength, setImageQueueLength] = useState(0); // solo para la UI
+
+  // drawId: cancela renders obsoletos cuando llegan imágenes rápido
+  const drawIdRef = useRef(0);
+
   const [settings, setSettings] = useState({
     strictDarkMode: true,
     saveOriginal: false,
     resolution: "1080"
   });
 
-  // Live clock
+  // Reloj en vivo
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Format times
   const timeString = currentTime.toLocaleTimeString('en-US', { hour12: false });
-  const dateString = currentTime.toLocaleDateString('en-US', { 
-    year: 'numeric', month: 'long', day: 'numeric' 
+  const dateString = currentTime.toLocaleDateString('en-US', {
+    year: 'numeric', month: 'long', day: 'numeric'
   }).toUpperCase();
 
-  // Try to get real location on mount
+  // Geolocalización al montar
   useEffect(() => {
     const savedLogo = localStorage.getItem('timemark_logo');
     if (savedLogo) setLogoImage(savedLogo);
 
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
-        async (position) => {
+        (position) => {
           const lat = position.coords.latitude;
           const lng = position.coords.longitude;
-          
           const latDir = lat >= 0 ? 'N' : 'S';
           const lngDir = lng >= 0 ? 'E' : 'W';
           const formatCoord = (val: number) => {
             const abs = Math.abs(val);
             const d = Math.floor(abs);
             const m = Math.floor((abs - d) * 60);
-            const s = ((abs - d - m/60) * 3600).toFixed(1);
+            const s = ((abs - d - m / 60) * 3600).toFixed(1);
             return `${d}°${m}'${s}"`;
           };
-
           setMapCoords({ lat, lng });
           setLocation(prev => ({
             ...prev,
@@ -109,11 +107,10 @@ export default function App() {
     }
   }, []);
 
-  // useEffect SOLO para redibujar cuando cambia logo o ubicación manualmente
-  // NO incluir originalImage ni timestamp para evitar doble llamada y condición de carrera
+  // Redibujar SOLO cuando cambia logo o ubicación manualmente (no cuando llega imagen nueva)
   useEffect(() => {
     if (originalImage) {
-      drawWatermark(originalImage, logoImage, locationRef.current);
+      drawWatermark(originalImage, logoImageRef.current, locationRef.current);
     }
   }, [logoImage, location.coords, location.address]);
 
@@ -131,59 +128,22 @@ export default function App() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${now.toLocaleTimeString('en-US', { hour12: false })}`;
   };
 
-  const processFile = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const imgSrc = event.target?.result as string;
+  // drawWatermark recibe un drawId: si para cuando termina el canvas ya hay uno más nuevo, descarta
+  const drawWatermark = (imgSrc: string, logoSrc: string | null, loc: typeof location, myDrawId?: number) => {
+    const currentDrawId = myDrawId ?? ++drawIdRef.current;
 
-      // Calcular timestamp ANTES de cualquier setState para evitar condición de carrera
-      const ts = buildTimestamp();
-
-      // Construir location completa con el timestamp correcto
-      const updatedLocation = { ...locationRef.current, timestamp: ts };
-
-      // Actualizar estados
-      setOriginalImage(imgSrc);
-      setLocation(updatedLocation);
-
-      // Llamar drawWatermark directamente con los valores correctos,
-      // sin esperar el re-render de React
-      drawWatermark(imgSrc, logoImage, updatedLocation);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []) as File[];
-    if (files.length > 0) {
-      processFile(files[0]);
-      setImageQueue(files.slice(1));
-    }
-    e.target.value = '';
-  };
-
-  const nextInQueue = () => {
-    setPreviewImage(null);
-    if (imageQueue.length > 0) {
-      const nextFile = imageQueue[0];
-      processFile(nextFile);
-      setImageQueue(prevQueue => prevQueue.slice(1));
-    } else {
-      setOriginalImage(null);
-    }
-  };
-
-  const drawWatermark = (imgSrc: string, logoSrc: string | null, loc: typeof location) => {
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => {
+      // Si ya llegó otra imagen más nueva, no continuamos
+      if (currentDrawId !== drawIdRef.current) return;
+
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
       canvas.width = img.width;
       canvas.height = img.height;
-      
       const scale = canvas.width / 1080;
 
       ctx.drawImage(img, 0, 0);
@@ -193,132 +153,168 @@ export default function App() {
       const topRectWidth = 240 * scale;
       const topRectHeight = 36 * scale;
       ctx.fillRect(24 * scale, 24 * scale, topRectWidth, topRectHeight);
-      
       ctx.fillStyle = '#ffb95f';
       ctx.fillRect(24 * scale, 24 * scale, 6 * scale, topRectHeight);
-
       ctx.font = `bold ${16 * scale}px "JetBrains Mono", monospace`;
       ctx.fillStyle = 'white';
       ctx.textBaseline = 'middle';
-      ctx.fillText('TIMEMARK SYSTEM', 44 * scale, 24 * scale + (topRectHeight / 2));
+      ctx.fillText('TIMEMARK SYSTEM', 44 * scale, 24 * scale + topRectHeight / 2);
 
-      const finishDrawing = (canvas: HTMLCanvasElement, logoImg: HTMLImageElement | null) => {
-         const ctx = canvas.getContext('2d');
-         if (!ctx) return;
-         const scale = canvas.width / 1080;
+      const finishDrawing = (logoImg: HTMLImageElement | null) => {
+        // Verificar de nuevo: si llegó otra imagen mientras cargaba el logo, descartar
+        if (currentDrawId !== drawIdRef.current) return;
 
-         const panelHeight = 180 * scale;
-         const panelWidth = Math.min(canvas.width * 0.9, 800 * scale);
-         const panelX = 24 * scale;
-         const panelY = canvas.height - panelHeight - 24 * scale;
+        const ctx2 = canvas.getContext('2d');
+        if (!ctx2) return;
+        const s = canvas.width / 1080;
 
-         ctx.shadowColor = 'rgba(0,0,0,0.5)';
-         ctx.shadowBlur = 12 * scale;
-         
-         ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-         ctx.beginPath();
-         ctx.roundRect(panelX, panelY, panelWidth, panelHeight, [0, 16 * scale, 16 * scale, 0]);
-         ctx.fill();
-         
-         ctx.shadowBlur = 0;
+        const panelHeight = 180 * s;
+        const panelWidth = Math.min(canvas.width * 0.9, 800 * s);
+        const panelX = 24 * s;
+        const panelY = canvas.height - panelHeight - 24 * s;
 
-         ctx.fillStyle = '#ffb95f';
-         ctx.fillRect(panelX, panelY, 6 * scale, panelHeight);
+        ctx2.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx2.shadowBlur = 12 * s;
+        ctx2.fillStyle = 'rgba(15, 23, 42, 0.85)';
+        ctx2.beginPath();
+        ctx2.roundRect(panelX, panelY, panelWidth, panelHeight, [0, 16 * s, 16 * s, 0]);
+        ctx2.fill();
+        ctx2.shadowBlur = 0;
 
-         ctx.textBaseline = 'alphabetic';
-         
-         ctx.fillStyle = '#ffb95f';
-         ctx.font = `${24 * scale}px sans-serif`;
-         ctx.fillText(`📍 ${loc.coords}`, panelX + 30 * scale, panelY + 50 * scale);
+        ctx2.fillStyle = '#ffb95f';
+        ctx2.fillRect(panelX, panelY, 6 * s, panelHeight);
 
-         ctx.fillStyle = 'white';
-         ctx.font = `bold ${32 * scale}px "JetBrains Mono", monospace`;
-         ctx.fillText(`${loc.address}, ${loc.city}`, panelX + 30 * scale, panelY + 100 * scale);
+        ctx2.textBaseline = 'alphabetic';
+        ctx2.fillStyle = '#ffb95f';
+        ctx2.font = `${24 * s}px sans-serif`;
+        ctx2.fillText(`📍 ${loc.coords}`, panelX + 30 * s, panelY + 50 * s);
 
-         ctx.fillStyle = '#c6c6cd';
-         ctx.font = `${20 * scale}px "JetBrains Mono", monospace`;
-         ctx.fillText(`TIMESTAMP: ${loc.timestamp}`, panelX + 30 * scale, panelY + 145 * scale);
+        ctx2.fillStyle = 'white';
+        ctx2.font = `bold ${32 * s}px "JetBrains Mono", monospace`;
+        ctx2.fillText(`${loc.address}, ${loc.city}`, panelX + 30 * s, panelY + 100 * s);
 
-         if (logoImg) {
-            const logoSize = 130 * scale; 
-            const logoPadding = (panelHeight - logoSize) / 2;
-            const logoX = panelX + panelWidth - logoSize - 25 * scale;
-            const logoY = panelY + logoPadding;
+        ctx2.fillStyle = '#c6c6cd';
+        ctx2.font = `${20 * s}px "JetBrains Mono", monospace`;
+        ctx2.fillText(`TIMESTAMP: ${loc.timestamp}`, panelX + 30 * s, panelY + 145 * s);
 
-            ctx.fillStyle = 'rgba(255, 255, 255, 1)';
-            ctx.beginPath();
-            ctx.roundRect(logoX, logoY, logoSize, logoSize, 8 * scale);
-            ctx.fill();
+        if (logoImg) {
+          const logoSize = 130 * s;
+          const logoPadding = (panelHeight - logoSize) / 2;
+          const logoX = panelX + panelWidth - logoSize - 25 * s;
+          const logoY = panelY + logoPadding;
 
-            const targetSize = logoSize - 16 * scale;
-            const imgAspect = logoImg.width / logoImg.height;
-            let drawWidth = targetSize;
-            let drawHeight = targetSize;
-            let drawX = logoX + 8 * scale;
-            let drawY = logoY + 8 * scale;
+          ctx2.fillStyle = 'rgba(255, 255, 255, 1)';
+          ctx2.beginPath();
+          ctx2.roundRect(logoX, logoY, logoSize, logoSize, 8 * s);
+          ctx2.fill();
 
-            if (imgAspect > 1) { 
-               drawHeight = targetSize / imgAspect;
-               drawY += (targetSize - drawHeight) / 2;
-            } else if (imgAspect < 1) {
-               drawWidth = targetSize * imgAspect;
-               drawX += (targetSize - drawWidth) / 2;
-            }
+          const targetSize = logoSize - 16 * s;
+          const imgAspect = logoImg.width / logoImg.height;
+          let drawWidth = targetSize;
+          let drawHeight = targetSize;
+          let drawX = logoX + 8 * s;
+          let drawY = logoY + 8 * s;
+          if (imgAspect > 1) { drawHeight = targetSize / imgAspect; drawY += (targetSize - drawHeight) / 2; }
+          else if (imgAspect < 1) { drawWidth = targetSize * imgAspect; drawX += (targetSize - drawWidth) / 2; }
 
-            ctx.drawImage(logoImg, drawX, drawY, drawWidth, drawHeight);
+          ctx2.drawImage(logoImg, drawX, drawY, drawWidth, drawHeight);
+          ctx2.fillStyle = '#ffb95f';
+          ctx2.font = `bold ${20 * s}px "JetBrains Mono", monospace`;
+          ctx2.textAlign = 'right';
+          ctx2.fillText('VERIFICADO', logoX - 25 * s, panelY + 145 * s);
+          ctx2.textAlign = 'left';
+        } else {
+          ctx2.fillStyle = '#ffb95f';
+          ctx2.font = `bold ${20 * s}px "JetBrains Mono", monospace`;
+          ctx2.textAlign = 'right';
+          ctx2.fillText('VERIFICADO', panelX + panelWidth - 30 * s, panelY + 145 * s);
+          ctx2.textAlign = 'left';
+        }
 
-            ctx.fillStyle = '#ffb95f';
-            ctx.font = `bold ${20 * scale}px "JetBrains Mono", monospace`;
-            ctx.textAlign = 'right';
-            ctx.fillText('VERIFICADO', logoX - 25 * scale, panelY + 145 * scale);
-            ctx.textAlign = 'left';
-         } else {
-            ctx.fillStyle = '#ffb95f';
-            ctx.font = `bold ${20 * scale}px "JetBrains Mono", monospace`;
-            ctx.textAlign = 'right';
-            ctx.fillText('VERIFICADO', panelX + panelWidth - 30 * scale, panelY + 145 * scale);
-            ctx.textAlign = 'left';
-         }
-
-         setPreviewImage(canvas.toDataURL('image/jpeg', 0.95));
-      }
+        setPreviewImage(canvas.toDataURL('image/jpeg', 0.95));
+      };
 
       if (logoSrc) {
         const logo = new Image();
-        logo.onload = () => {
-          finishDrawing(canvas, logo);
-        };
+        logo.onload = () => finishDrawing(logo);
+        logo.onerror = () => finishDrawing(null);
         logo.src = logoSrc;
       } else {
-        finishDrawing(canvas, null);
+        finishDrawing(null);
       }
     };
     img.src = imgSrc;
   };
 
-  const handleSave = () => {
-    if (previewImage) {
-      if (settings.saveOriginal && originalImage) {
-        const linkOriginal = document.createElement('a');
-        linkOriginal.download = `original_${Date.now()}.jpg`;
-        linkOriginal.href = originalImage;
-        linkOriginal.click();
-      }
+  const processFile = (file: File) => {
+    // Incrementar drawId ANTES de leer el archivo: cancela cualquier render en curso
+    const myDrawId = ++drawIdRef.current;
 
-      const link = document.createElement('a');
-      link.download = `timemark_${Date.now()}.jpg`;
-      link.href = previewImage;
-      link.click();
-      
-      setLogs(prev => [{
-        id: Date.now(), 
-        img: previewImage, 
-        time: location.timestamp, 
-        address: `${location.address}, ${location.city}`
-      }, ...prev]);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const imgSrc = event.target?.result as string;
+      const ts = buildTimestamp();
+      const updatedLocation = { ...locationRef.current, timestamp: ts };
 
-      nextInQueue();
+      setOriginalImage(imgSrc);
+      setLocation(updatedLocation);
+      locationRef.current = updatedLocation;
+
+      // Llamada directa con el drawId reservado y valores correctos
+      drawWatermark(imgSrc, logoImageRef.current, updatedLocation, myDrawId);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []) as File[];
+    if (files.length > 0) {
+      // Guardar resto en ref (no estado) para que nextInQueue siempre vea el valor real
+      imageQueueRef.current = files.slice(1);
+      setImageQueueLength(files.length - 1);
+      processFile(files[0]);
     }
+    e.target.value = '';
+  };
+
+  const nextInQueue = () => {
+    const queue = imageQueueRef.current;
+    if (queue.length > 0) {
+      const nextFile = queue[0];
+      imageQueueRef.current = queue.slice(1);
+      setImageQueueLength(queue.length - 1);
+      processFile(nextFile);
+    } else {
+      imageQueueRef.current = [];
+      setImageQueueLength(0);
+      setOriginalImage(null);
+      setPreviewImage(null);
+    }
+  };
+
+  const handleSave = () => {
+    if (!previewImage) return;
+
+    if (settings.saveOriginal && originalImage) {
+      const linkOriginal = document.createElement('a');
+      linkOriginal.download = `original_${Date.now()}.jpg`;
+      linkOriginal.href = originalImage;
+      linkOriginal.click();
+    }
+
+    const link = document.createElement('a');
+    link.download = `timemark_${Date.now()}.jpg`;
+    link.href = previewImage;
+    link.click();
+
+    setLogs(prev => [{
+      id: Date.now(),
+      img: previewImage,
+      time: location.timestamp,
+      address: `${location.address}, ${location.city}`
+    }, ...prev]);
+
+    nextInQueue();
   };
 
   const openTimeModal = () => {
@@ -343,18 +339,14 @@ export default function App() {
     if (editDate && editTime) {
       const randomSecs = String(Math.floor(Math.random() * 60)).padStart(2, '0');
       const ts = `${editDate} ${editTime}:${randomSecs}`;
-      setLocation(prev => ({...prev, timestamp: ts}));
-      setCustomTimestamp(ts);
+      setLocation(prev => ({ ...prev, timestamp: ts }));
+      customTimestampRef.current = ts;
     }
     setIsTimeModalOpen(false);
   };
 
   const openLocationModal = () => {
-    setEditLocationDetails({
-      coords: location.coords,
-      address: location.address,
-      city: location.city
-    });
+    setEditLocationDetails({ coords: location.coords, address: location.address, city: location.city });
     setIsLocationModalOpen(true);
   };
 
@@ -376,9 +368,7 @@ export default function App() {
           <div className="mb-10">
             <h1 className="text-3xl font-bold text-secondary tracking-tight">TimeMark</h1>
             <div className="mt-4 flex items-center gap-3 p-3 bg-surface-container-high rounded-lg border border-outline-variant/20">
-              <div className="w-10 h-10 rounded-full bg-surface-variant flex items-center justify-center text-on-surface">
-                U4
-              </div>
+              <div className="w-10 h-10 rounded-full bg-surface-variant flex items-center justify-center text-on-surface">U4</div>
               <div>
                 <p className="text-on-surface font-bold text-sm">{unitName}</p>
                 <p className="text-on-surface-variant text-xs flex items-center gap-1">
@@ -390,40 +380,26 @@ export default function App() {
           </div>
 
           <nav className="flex-1 space-y-2">
-            <button 
-              onClick={() => setActiveTab('dashboard')} 
-              className={`w-full flex items-center gap-4 px-4 py-3 rounded-lg font-bold transition-colors text-left ${activeTab === 'dashboard' ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-bright'}`}
-            >
-              <LayoutDashboard size={20} />
-              Panel de Control
-            </button>
-            <button 
-              onClick={() => setActiveTab('logs')} 
-              className={`w-full flex items-center gap-4 px-4 py-3 rounded-lg font-bold transition-colors text-left ${activeTab === 'logs' ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-bright'}`}
-            >
-              <FileText size={20} />
-              Registros de Patrulla
-            </button>
-            <button 
-              onClick={() => setActiveTab('map')} 
-              className={`w-full flex items-center gap-4 px-4 py-3 rounded-lg font-bold transition-colors text-left ${activeTab === 'map' ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-bright'}`}
-            >
-              <MapIcon size={20} />
-              Vista del Mapa
-            </button>
-            <button 
-              onClick={() => setActiveTab('settings')} 
-              className={`w-full flex items-center gap-4 px-4 py-3 rounded-lg font-bold transition-colors text-left ${activeTab === 'settings' ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-bright'}`}
-            >
-              <Settings size={20} />
-              Ajustes
-            </button>
+            {[
+              { id: 'dashboard', label: 'Panel de Control', Icon: LayoutDashboard },
+              { id: 'logs', label: 'Registros de Patrulla', Icon: FileText },
+              { id: 'map', label: 'Vista del Mapa', Icon: MapIcon },
+              { id: 'settings', label: 'Ajustes', Icon: Settings },
+            ].map(({ id, label, Icon }) => (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id)}
+                className={`w-full flex items-center gap-4 px-4 py-3 rounded-lg font-bold transition-colors text-left ${activeTab === id ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-bright'}`}
+              >
+                <Icon size={20} />
+                {label}
+              </button>
+            ))}
           </nav>
 
           <div className="pt-6 border-t border-outline-variant/30">
             <button className="flex items-center gap-4 px-4 py-3 w-full text-on-surface-variant hover:bg-surface-bright rounded-lg transition-colors mb-4 text-left">
-              <HelpCircle size={20} />
-              Soporte
+              <HelpCircle size={20} /> Soporte
             </button>
             <button className="w-full py-3 bg-error-container text-on-error-container font-bold rounded-lg hover:brightness-110 active:scale-95 transition-all text-center">
               Finalizar Turno
@@ -434,232 +410,184 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto p-4 md:p-8 bg-background">
-        {/* Header */}
         <header className="flex flex-col md:flex-row justify-between md:items-end gap-4 mb-8">
           <div>
             <h2 className="text-2xl md:text-3xl font-bold text-on-surface">Centro de Mando</h2>
             <p className="text-on-surface-variant">Centro de Vigilancia y Verificación</p>
           </div>
           <div className="glass-card px-6 py-4 rounded-xl text-right shrink-0">
-            <div className="font-mono text-xl md:text-2xl text-secondary tabular-nums font-medium">
-              {timeString}
-            </div>
-            <div className="font-bold text-xs tracking-widest text-on-surface-variant mt-1 uppercase">
-               {dateString}
-            </div>
+            <div className="font-mono text-xl md:text-2xl text-secondary tabular-nums font-medium">{timeString}</div>
+            <div className="font-bold text-xs tracking-widest text-on-surface-variant mt-1 uppercase">{dateString}</div>
           </div>
         </header>
 
-        {/* Bento Grid layout */}
         {activeTab === 'dashboard' ? (
           <>
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              
               {/* Left Column */}
-          <div className="col-span-1 lg:col-span-4 space-y-6 flex flex-col">
-            
-            {/* Location Card */}
-            <section className="glass-card p-6 rounded-xl flex-1 max-h-64 flex flex-col">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-[11px] font-bold tracking-[0.1em] text-secondary uppercase">Ubicación Actual</h3>
-                <button onClick={openLocationModal} className="text-secondary hover:text-white transition-colors">
-                  <Edit2 size={18} />
-                </button>
-              </div>
-              <p className="text-on-surface font-bold text-lg mb-1">{location.address}</p>
-              <p className="text-on-surface-variant text-sm mb-4">{location.city}, RM</p>
-              
-              <div className="flex-1 rounded-lg bg-surface-container-highest relative overflow-hidden flex items-center justify-center min-h-[140px] mt-4">
-                <iframe
-                  title="Current Location"
-                  width="100%" 
-                  height="100%" 
-                  frameBorder="0" 
-                  scrolling="no" 
-                  marginHeight={0} 
-                  marginWidth={0}
-                  src={`https://maps.google.com/maps?q=${mapCoords.lat},${mapCoords.lng}&z=15&output=embed`}
-                  style={{ border: 0, filter: 'contrast(1.2) brightness(0.8) sepia(0.3) hue-rotate(180deg) invert(0.1)' }} 
-                ></iframe>
-                <div className="absolute inset-0 pointer-events-none border border-outline-variant/30 rounded-lg shadow-inner"></div>
-              </div>
-            </section>
+              <div className="col-span-1 lg:col-span-4 space-y-6 flex flex-col">
+                {/* Location Card */}
+                <section className="glass-card p-6 rounded-xl flex-1 max-h-64 flex flex-col">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-[11px] font-bold tracking-[0.1em] text-secondary uppercase">Ubicación Actual</h3>
+                    <button onClick={openLocationModal} className="text-secondary hover:text-white transition-colors">
+                      <Edit2 size={18} />
+                    </button>
+                  </div>
+                  <p className="text-on-surface font-bold text-lg mb-1">{location.address}</p>
+                  <p className="text-on-surface-variant text-sm mb-4">{location.city}, RM</p>
+                  <div className="flex-1 rounded-lg bg-surface-container-highest relative overflow-hidden flex items-center justify-center min-h-[140px] mt-4">
+                    <iframe
+                      title="Current Location"
+                      width="100%" height="100%" frameBorder="0" scrolling="no" marginHeight={0} marginWidth={0}
+                      src={`https://maps.google.com/maps?q=${mapCoords.lat},${mapCoords.lng}&z=15&output=embed`}
+                      style={{ border: 0, filter: 'contrast(1.2) brightness(0.8) sepia(0.3) hue-rotate(180deg) invert(0.1)' }}
+                    />
+                    <div className="absolute inset-0 pointer-events-none border border-outline-variant/30 rounded-lg shadow-inner" />
+                  </div>
+                </section>
 
-            {/* Actions Card */}
-            <section className="glass-card p-6 rounded-xl space-y-4">
-              <h3 className="text-[11px] font-bold tracking-[0.1em] text-on-surface-variant uppercase mb-4">Operaciones de Campo</h3>
-              
-              <button 
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full flex items-center justify-center md:justify-between px-6 py-4 bg-secondary text-on-secondary font-bold rounded-lg hover:brightness-110 active:scale-95 transition-all shadow-lg shadow-secondary/10"
-              >
-                <span className="flex items-center gap-3">
-                  <Camera size={20} />
-                  Tomar foto
-                </span>
-                <span className="hidden md:inline">→</span>
-              </button>
-              
-              <button 
-                onClick={() => galleryInputRef.current?.click()}
-                className="w-full flex items-center justify-center gap-3 px-6 py-4 border border-outline-variant bg-surface-container-low text-on-surface font-bold rounded-lg hover:bg-surface-variant/50 active:scale-95 transition-all"
-              >
-                <ImageIcon size={20} />
-                Seleccionar de galería
-              </button>
-              
-              <div className="flex gap-2 w-full">
-                <button 
-                  onClick={() => logoInputRef.current?.click()}
-                  className="flex-1 flex items-center justify-center gap-3 px-6 py-4 border border-outline-variant border-dashed text-on-surface-variant font-medium rounded-lg hover:border-secondary hover:text-secondary transition-all"
-                >
-                  <Upload size={20} />
-                  {logoImage ? 'Cambiar logo' : 'Cargar logo'}
-                </button>
-                {logoImage && (
-                  <button 
-                    onClick={() => {
-                      setLogoImage(null);
-                      localStorage.removeItem('timemark_logo');
-                    }}
-                    className="px-4 py-4 border border-error/50 text-error rounded-lg hover:bg-error/10 transition-colors flex items-center justify-center shrink-0"
-                    title="Eliminar logo"
+                {/* Actions Card */}
+                <section className="glass-card p-6 rounded-xl space-y-4">
+                  <h3 className="text-[11px] font-bold tracking-[0.1em] text-on-surface-variant uppercase mb-4">Operaciones de Campo</h3>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full flex items-center justify-center md:justify-between px-6 py-4 bg-secondary text-on-secondary font-bold rounded-lg hover:brightness-110 active:scale-95 transition-all shadow-lg shadow-secondary/10"
                   >
-                    <X size={20} />
+                    <span className="flex items-center gap-3"><Camera size={20} /> Tomar foto</span>
+                    <span className="hidden md:inline">→</span>
                   </button>
-                )}
-              </div>
-
-              {/* Hidden Inputs */}
-              <input 
-                type="file" 
-                accept="image/*" 
-                capture="environment" 
-                ref={fileInputRef} 
-                className="hidden" 
-                onChange={handleImageUpload} 
-              />
-              <input 
-                type="file" 
-                accept="image/*" 
-                multiple
-                ref={galleryInputRef} 
-                className="hidden" 
-                onChange={handleImageUpload} 
-              />
-              <input 
-                type="file" 
-                accept="image/png, image/jpeg" 
-                ref={logoInputRef} 
-                className="hidden" 
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    const r = new FileReader();
-                    r.onload = (ev) => {
-                      const result = ev.target?.result as string;
-                      setLogoImage(result);
-                      localStorage.setItem('timemark_logo', result);
-                    }
-                    r.readAsDataURL(file);
-                  }
-                }} 
-              />
-            </section>
-          </div>
-
-          {/* Right Column: Preview Area */}
-          <div className="col-span-1 lg:col-span-8 h-full">
-            <section className="glass-card rounded-xl flex flex-col overflow-hidden h-[500px] lg:h-full min-h-[500px]">
-              <div className="px-6 py-4 border-b border-outline-variant/30 flex justify-between items-center bg-surface-container-high/50 shrink-0">
-                <h3 className="text-[11px] font-bold tracking-[0.1em] text-secondary uppercase flex items-center gap-2">
-                  <ShieldCheck size={16} />
-                  Vista Previa
-                </h3>
-                <div className="flex gap-2 text-on-surface-variant">
-                  <button className="hover:text-secondary hover:bg-surface-variant p-1.5 justify-center rounded transition-colors active:scale-95 flex items-center text-on-surface-variant">
-                    <Maximize size={18} />
+                  <button
+                    onClick={() => galleryInputRef.current?.click()}
+                    className="w-full flex items-center justify-center gap-3 px-6 py-4 border border-outline-variant bg-surface-container-low text-on-surface font-bold rounded-lg hover:bg-surface-variant/50 active:scale-95 transition-all"
+                  >
+                    <ImageIcon size={20} /> Seleccionar de galería
                   </button>
-                </div>
-              </div>
-              
-              <div className="flex-1 bg-black flex items-center justify-center relative overflow-hidden p-4">
-                {previewImage ? (
-                  <img src={previewImage} alt="Watermarked" className="max-h-full max-w-full object-contain rounded shadow-2xl" />
-                ) : (
-                  <div className="text-center text-on-surface-variant flex flex-col items-center gap-4">
-                    <Camera size={48} className="opacity-20" />
-                    <p className="font-mono text-sm">Esperando captura de imagen...</p>
+                  <div className="flex gap-2 w-full">
+                    <button
+                      onClick={() => logoInputRef.current?.click()}
+                      className="flex-1 flex items-center justify-center gap-3 px-6 py-4 border border-outline-variant border-dashed text-on-surface-variant font-medium rounded-lg hover:border-secondary hover:text-secondary transition-all"
+                    >
+                      <Upload size={20} /> {logoImage ? 'Cambiar logo' : 'Cargar logo'}
+                    </button>
+                    {logoImage && (
+                      <button
+                        onClick={() => { setLogoImage(null); localStorage.removeItem('timemark_logo'); }}
+                        className="px-4 py-4 border border-error/50 text-error rounded-lg hover:bg-error/10 transition-colors flex items-center justify-center shrink-0"
+                        title="Eliminar logo"
+                      >
+                        <X size={20} />
+                      </button>
+                    )}
                   </div>
-                )}
+
+                  <input type="file" accept="image/*" capture="environment" ref={fileInputRef} className="hidden" onChange={handleImageUpload} />
+                  <input type="file" accept="image/*" multiple ref={galleryInputRef} className="hidden" onChange={handleImageUpload} />
+                  <input
+                    type="file" accept="image/png, image/jpeg" ref={logoInputRef} className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const r = new FileReader();
+                        r.onload = (ev) => {
+                          const result = ev.target?.result as string;
+                          setLogoImage(result);
+                          localStorage.setItem('timemark_logo', result);
+                        };
+                        r.readAsDataURL(file);
+                      }
+                    }}
+                  />
+                </section>
               </div>
 
-              {previewImage && (
-                <div className="p-4 md:p-6 bg-surface-container-low/50 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between border-t border-outline-variant/30 shrink-0">
-                  <div>
-                    <p className="text-on-surface-variant text-[10px] uppercase font-bold tracking-widest mb-2">Integridad</p>
-                    <div className="flex gap-2">
-                      <span className="bg-secondary/10 text-secondary border border-secondary/20 px-2 py-0.5 rounded font-mono text-xs">MD5: VERIFICADO</span>
-                      <span className="bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded font-mono text-xs">LISTO</span>
+              {/* Right Column: Preview */}
+              <div className="col-span-1 lg:col-span-8 h-full">
+                <section className="glass-card rounded-xl flex flex-col overflow-hidden h-[500px] lg:h-full min-h-[500px]">
+                  <div className="px-6 py-4 border-b border-outline-variant/30 flex justify-between items-center bg-surface-container-high/50 shrink-0">
+                    <h3 className="text-[11px] font-bold tracking-[0.1em] text-secondary uppercase flex items-center gap-2">
+                      <ShieldCheck size={16} /> Vista Previa
+                    </h3>
+                    <button className="hover:text-secondary hover:bg-surface-variant p-1.5 rounded transition-colors active:scale-95 flex items-center text-on-surface-variant">
+                      <Maximize size={18} />
+                    </button>
+                  </div>
+
+                  <div className="flex-1 bg-black flex items-center justify-center relative overflow-hidden p-4">
+                    {previewImage ? (
+                      <img src={previewImage} alt="Watermarked" className="max-h-full max-w-full object-contain rounded shadow-2xl" />
+                    ) : (
+                      <div className="text-center text-on-surface-variant flex flex-col items-center gap-4">
+                        <Camera size={48} className="opacity-20" />
+                        <p className="font-mono text-sm">Esperando captura de imagen...</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {previewImage && (
+                    <div className="p-4 md:p-6 bg-surface-container-low/50 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between border-t border-outline-variant/30 shrink-0">
+                      <div>
+                        <p className="text-on-surface-variant text-[10px] uppercase font-bold tracking-widest mb-2">Integridad</p>
+                        <div className="flex gap-2">
+                          <span className="bg-secondary/10 text-secondary border border-secondary/20 px-2 py-0.5 rounded font-mono text-xs">MD5: VERIFICADO</span>
+                          <span className="bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded font-mono text-xs">LISTO</span>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap w-full md:w-auto gap-3 mt-4 md:mt-0">
+                        <button
+                          onClick={openTimeModal}
+                          className="flex-1 min-w-[100px] border border-outline-variant/50 hover:bg-surface-container text-on-surface rounded-lg font-bold py-2.5 transition-colors flex justify-center items-center gap-2"
+                        >
+                          <Clock size={16} /> Hora
+                        </button>
+                        <button
+                          onClick={nextInQueue}
+                          className="flex-1 min-w-[100px] bg-surface-container-highest text-on-surface rounded-lg font-bold border border-outline-variant/50 hover:bg-surface-variant transition-colors px-2"
+                        >
+                          {imageQueueLength > 0 ? `Descartar (+${imageQueueLength})` : 'Descartar'}
+                        </button>
+                        <button
+                          onClick={handleSave}
+                          className="flex-1 min-w-[150px] bg-secondary text-on-secondary rounded-lg font-bold shadow-[0_0_15px_rgba(255,185,95,0.2)] hover:brightness-110 active:scale-95 transition-all px-2"
+                        >
+                          {imageQueueLength > 0 ? 'Guardar y Siguiente' : 'Guardar'}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                  
-                  <div className="flex flex-wrap w-full md:w-auto gap-3 mt-4 md:mt-0">
-                    <button 
-                      onClick={openTimeModal}
-                      className="flex-1 min-w-[100px] border border-outline-variant/50 hover:bg-surface-container text-on-surface rounded-lg font-bold py-2.5 transition-colors flex justify-center items-center gap-2"
-                    >
-                      <Clock size={16}/> Hora
-                    </button>
-                    <button 
-                      onClick={nextInQueue}
-                      className="flex-1 min-w-[100px] bg-surface-container-highest text-on-surface rounded-lg font-bold border border-outline-variant/50 hover:bg-surface-variant transition-colors px-2"
-                    >
-                      {imageQueue.length > 0 ? `Descartar (+${imageQueue.length})` : 'Descartar'}
-                    </button>
-                    <button 
-                      onClick={handleSave}
-                      className="flex-1 min-w-[150px] bg-secondary text-on-secondary rounded-lg font-bold shadow-[0_0_15px_rgba(255,185,95,0.2)] hover:brightness-110 active:scale-95 transition-all px-2"
-                    >
-                      {imageQueue.length > 0 ? 'Guardar y Siguiente' : 'Guardar'}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </section>
-          </div>
-        </div>
+                  )}
+                </section>
+              </div>
+            </div>
 
-        {/* Footer Stats / Progress */}
-        <footer className="mt-6 p-6 glass-card rounded-xl flex flex-col sm:flex-row items-center gap-6 lg:gap-10 sm:justify-between">
-          <div className="flex-1 w-full grid grid-cols-2 md:grid-cols-4 gap-6">
-            <div>
-              <p className="text-on-surface-variant text-[10px] uppercase font-bold tracking-widest mb-1">Registros</p>
-              <p className="text-xl font-bold text-on-surface">{String(logs.length).padStart(2, '0')}</p>
-            </div>
-            <div>
-              <p className="text-on-surface-variant text-[10px] uppercase font-bold tracking-widest mb-1">Unidad Asignada</p>
-              <p className="text-xl font-bold text-on-surface">{unitName}</p>
-            </div>
-            <div>
-              <p className="text-on-surface-variant text-[10px] uppercase font-bold tracking-widest mb-1">Logo Activo</p>
-              <p className="text-xl font-bold text-on-surface">{logoImage ? 'Sí' : 'No'}</p>
-            </div>
-            <div>
-              <p className="text-on-surface-variant text-[10px] uppercase font-bold tracking-widest mb-1">Calidad</p>
-              <p className="text-xl font-bold text-secondary">{settings.resolution}p</p>
-            </div>
-          </div>
-        </footer>
-        </>
+            <footer className="mt-6 p-6 glass-card rounded-xl">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                <div>
+                  <p className="text-on-surface-variant text-[10px] uppercase font-bold tracking-widest mb-1">Registros</p>
+                  <p className="text-xl font-bold text-on-surface">{String(logs.length).padStart(2, '0')}</p>
+                </div>
+                <div>
+                  <p className="text-on-surface-variant text-[10px] uppercase font-bold tracking-widest mb-1">Unidad Asignada</p>
+                  <p className="text-xl font-bold text-on-surface">{unitName}</p>
+                </div>
+                <div>
+                  <p className="text-on-surface-variant text-[10px] uppercase font-bold tracking-widest mb-1">Logo Activo</p>
+                  <p className="text-xl font-bold text-on-surface">{logoImage ? 'Sí' : 'No'}</p>
+                </div>
+                <div>
+                  <p className="text-on-surface-variant text-[10px] uppercase font-bold tracking-widest mb-1">Calidad</p>
+                  <p className="text-xl font-bold text-secondary">{settings.resolution}p</p>
+                </div>
+              </div>
+            </footer>
+          </>
         ) : activeTab === 'logs' ? (
           <div className="glass-card flex-1 p-8 rounded-xl flex flex-col items-center justify-start text-on-surface-variant h-[calc(100vh-160px)] min-h-[400px] overflow-y-auto w-full">
             <div className="w-full max-w-5xl">
               <h2 className="text-xl md:text-2xl font-bold text-on-surface uppercase tracking-widest mb-8 flex items-center gap-3">
-                <FileText className="text-secondary"/> Registros de Patrulla
+                <FileText className="text-secondary" /> Registros de Patrulla
               </h2>
               {logs.length === 0 ? (
-                <div className="flex-1 flex flex-col items-center justify-center text-on-surface-variant opacity-60 mt-20">
+                <div className="flex flex-col items-center justify-center text-on-surface-variant opacity-60 mt-20">
                   <FileText size={64} className="mb-6 opacity-50" />
                   <p className="text-lg">No hay registros guardados en este turno.</p>
                   <p className="mt-2 text-sm max-w-md text-center">Toma una foto en el Panel de Control y guárdala para verla aquí.</p>
@@ -692,20 +620,15 @@ export default function App() {
         ) : activeTab === 'map' ? (
           <div className="glass-card flex-1 p-6 md:p-8 rounded-xl flex flex-col text-on-surface-variant h-[calc(100vh-160px)] min-h-[400px] w-full">
             <h2 className="text-xl md:text-2xl font-bold text-on-surface uppercase tracking-widest mb-6 flex items-center gap-3">
-              <MapIcon className="text-secondary"/> Vista del Mapa Operativo
+              <MapIcon className="text-secondary" /> Vista del Mapa Operativo
             </h2>
             <div className="flex-1 rounded-xl overflow-hidden border border-outline-variant/50 relative shadow-inner bg-surface-container-lowest">
               <iframe
                 title="Operational Map"
-                width="100%" 
-                height="100%" 
-                frameBorder="0" 
-                scrolling="no" 
-                marginHeight={0} 
-                marginWidth={0}
+                width="100%" height="100%" frameBorder="0" scrolling="no" marginHeight={0} marginWidth={0}
                 src={`https://maps.google.com/maps?q=${mapCoords.lat},${mapCoords.lng}&z=15&output=embed`}
                 style={{ border: 0, filter: 'contrast(1.1) brightness(0.9) sepia(0.2) hue-rotate(180deg) invert(0.1)', position: 'absolute', inset: 0 }}
-              ></iframe>
+              />
               <div className="absolute top-4 left-4 bg-surface-container/90 backdrop-blur-md p-4 rounded-lg border border-outline-variant/30 shadow-xl max-w-xs">
                 <p className="text-[10px] uppercase font-bold tracking-widest text-secondary mb-1">Última Posición</p>
                 <p className="text-on-surface text-sm font-bold truncate">{location.address}</p>
@@ -717,11 +640,9 @@ export default function App() {
           <div className="glass-card flex-1 p-6 md:p-8 rounded-xl flex flex-col items-center justify-start text-on-surface-variant h-[calc(100vh-160px)] min-h-[400px] overflow-y-auto w-full">
             <div className="w-full max-w-2xl">
               <h2 className="text-xl md:text-2xl font-bold text-on-surface uppercase tracking-widest mb-8 flex items-center gap-3">
-                <Settings className="text-secondary"/> Ajustes del Sistema
+                <Settings className="text-secondary" /> Ajustes del Sistema
               </h2>
-              
               <div className="space-y-8">
-                {/* Profile Section */}
                 <div className="bg-surface-container rounded-xl p-6 border border-outline-variant/30 shadow-lg">
                   <h3 className="text-xs font-bold text-secondary uppercase tracking-[0.15em] mb-6 flex items-center gap-2">
                     <ShieldCheck size={16} /> Perfil Operativo
@@ -729,18 +650,16 @@ export default function App() {
                   <div className="space-y-5">
                     <div>
                       <label className="block text-[11px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Identificador de Unidad</label>
-                      <input 
-                        type="text" 
-                        value={unitName} 
-                        onChange={e => setUnitName(e.target.value)} 
-                        className="w-full bg-surface-container-high border border-outline-variant/50 rounded-lg p-3.5 text-on-surface focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-all font-mono" 
+                      <input
+                        type="text" value={unitName} onChange={e => setUnitName(e.target.value)}
+                        className="w-full bg-surface-container-high border border-outline-variant/50 rounded-lg p-3.5 text-on-surface focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-all font-mono"
                       />
                     </div>
                     <div>
                       <label className="block text-[11px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Resolución de Captura</label>
-                      <select 
+                      <select
                         value={settings.resolution}
-                        onChange={(e) => setSettings(s => ({...s, resolution: e.target.value}))}
+                        onChange={(e) => setSettings(s => ({ ...s, resolution: e.target.value }))}
                         className="w-full bg-surface-container-high border border-outline-variant/50 rounded-lg p-3.5 text-on-surface focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-all appearance-none cursor-pointer"
                       >
                         <option value="1080">Alta (1080p - Recomendada)</option>
@@ -751,104 +670,83 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* System Toggles */}
                 <div className="bg-surface-container rounded-xl p-6 border border-outline-variant/30 shadow-lg">
                   <h3 className="text-xs font-bold text-secondary uppercase tracking-[0.15em] mb-6 flex items-center gap-2">
                     <Settings size={16} /> Preferencias
                   </h3>
                   <div className="space-y-4">
-                    <div 
-                      onClick={() => setSettings(s => ({...s, strictDarkMode: !s.strictDarkMode}))}
-                      className="flex items-center justify-between p-3 rounded-lg hover:bg-surface-container-high transition-colors cursor-pointer border border-transparent hover:border-outline-variant/20"
-                    >
-                      <div>
-                        <p className="text-on-surface font-bold text-sm">Modo Nocturno Estricto</p>
-                        <p className="text-[11px] text-on-surface-variant mt-0.5">Fuerza interfaz oscura incluso de día</p>
+                    {[
+                      { key: 'strictDarkMode', label: 'Modo Nocturno Estricto', desc: 'Fuerza interfaz oscura incluso de día' },
+                      { key: 'saveOriginal', label: 'Guardar Copia Original', desc: 'Almacena foto sin marca de agua' },
+                    ].map(({ key, label, desc }) => (
+                      <div
+                        key={key}
+                        onClick={() => setSettings(s => ({ ...s, [key]: !s[key as keyof typeof s] }))}
+                        className="flex items-center justify-between p-3 rounded-lg hover:bg-surface-container-high transition-colors cursor-pointer border border-transparent hover:border-outline-variant/20"
+                      >
+                        <div>
+                          <p className="text-on-surface font-bold text-sm">{label}</p>
+                          <p className="text-[11px] text-on-surface-variant mt-0.5">{desc}</p>
+                        </div>
+                        <div className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${settings[key as keyof typeof settings] ? 'bg-secondary' : 'bg-surface-container-highest'}`}>
+                          <span className={`inline-block w-4 h-4 bg-white rounded-full transition-transform ${settings[key as keyof typeof settings] ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </div>
                       </div>
-                      <div className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${settings.strictDarkMode ? 'bg-secondary' : 'bg-surface-container-highest'}`}>
-                        <span className={`inline-block w-4 h-4 transform bg-${settings.strictDarkMode ? 'surface-container' : 'outline-variant'} rounded-full transition-transform ${settings.strictDarkMode ? 'translate-x-6' : 'translate-x-1'}`} />
-                      </div>
-                    </div>
-                    
-                    <div 
-                      onClick={() => setSettings(s => ({...s, saveOriginal: !s.saveOriginal}))}
-                      className="flex items-center justify-between p-3 rounded-lg hover:bg-surface-container-high transition-colors cursor-pointer border border-transparent hover:border-outline-variant/20"
-                    >
-                      <div>
-                        <p className="text-on-surface font-bold text-sm">Guardar Copia Original</p>
-                        <p className="text-[11px] text-on-surface-variant mt-0.5">Almacena foto sin marca de agua</p>
-                      </div>
-                      <div className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${settings.saveOriginal ? 'bg-secondary' : 'bg-surface-container-highest'}`}>
-                        <span className={`inline-block w-4 h-4 transform bg-${settings.saveOriginal ? 'surface-container' : 'outline-variant'} rounded-full transition-transform ${settings.saveOriginal ? 'translate-x-6' : 'translate-x-1'}`} />
-                      </div>
-                    </div>
+                    ))}
                   </div>
                 </div>
 
-                <button onClick={() => alert('Configuración guardada exitosamente.')} className="w-full px-6 py-4 bg-secondary text-on-secondary font-bold text-sm rounded-xl hover:brightness-110 shadow-[0_0_20px_rgba(255,185,95,0.15)] active:scale-[0.98] transition-all">
+                <button
+                  onClick={() => alert('Configuración guardada exitosamente.')}
+                  className="w-full px-6 py-4 bg-secondary text-on-secondary font-bold text-sm rounded-xl hover:brightness-110 shadow-[0_0_20px_rgba(255,185,95,0.15)] active:scale-[0.98] transition-all"
+                >
                   Guardar Cambios
                 </button>
               </div>
             </div>
           </div>
         )}
-
       </main>
 
       {/* Time Edit Modal */}
       {isTimeModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
           <div className="bg-surface-container border border-outline-variant/50 rounded-xl w-full max-w-sm p-6 shadow-2xl relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-secondary"></div>
+            <div className="absolute top-0 left-0 w-full h-1 bg-secondary" />
             <h3 className="text-xl font-bold text-on-surface mb-6 flex items-center gap-2">
-              <Clock size={20} className="text-secondary" /> 
-              Ajustar fecha y hora
+              <Clock size={20} className="text-secondary" /> Ajustar fecha y hora
             </h3>
             <div className="space-y-5">
               <div>
                 <label className="block text-[11px] font-bold tracking-widest text-on-surface-variant uppercase mb-2">Fecha</label>
-                <input 
-                  type="date" 
-                  value={editDate} 
-                  onChange={e => setEditDate(e.target.value)} 
-                  className="w-full bg-surface-container-high border border-outline-variant/40 rounded-lg p-3 text-on-surface focus:border-secondary transition-colors outline-none" 
-                />
+                <input type="date" value={editDate} onChange={e => setEditDate(e.target.value)}
+                  className="w-full bg-surface-container-high border border-outline-variant/40 rounded-lg p-3 text-on-surface focus:border-secondary transition-colors outline-none" />
               </div>
               <div>
                 <label className="block text-[11px] font-bold tracking-widest text-on-surface-variant uppercase mb-2">Hora (24h)</label>
-                <input 
-                  type="time" 
-                  value={editTime} 
-                  onChange={e => setEditTime(e.target.value)} 
-                  className="w-full bg-surface-container-high border border-outline-variant/40 rounded-lg p-3 text-on-surface focus:border-secondary transition-colors outline-none" 
-                />
+                <input type="time" value={editTime} onChange={e => setEditTime(e.target.value)}
+                  className="w-full bg-surface-container-high border border-outline-variant/40 rounded-lg p-3 text-on-surface focus:border-secondary transition-colors outline-none" />
               </div>
             </div>
-            
             <div className="mt-8 flex gap-3">
-              <button 
+              <button
                 onClick={() => {
-                  setCustomTimestamp(null);
+                  customTimestampRef.current = null;
                   const now = new Date();
                   const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${now.toLocaleTimeString('en-US', { hour12: false })}`;
-                  setLocation(prev => ({...prev, timestamp: ts}));
+                  setLocation(prev => ({ ...prev, timestamp: ts }));
                   setIsTimeModalOpen(false);
-                }} 
+                }}
                 className="px-4 py-3 bg-surface-container-highest text-on-surface text-sm font-bold rounded-lg hover:bg-surface-variant flex-1 transition-colors flex items-center justify-center gap-2"
-                title="Quitar hora personalizada"
               >
                 ↺ Restablecer
               </button>
-              <button 
-                onClick={applyCustomTime} 
-                className="px-4 py-3 bg-secondary text-on-secondary text-sm font-bold rounded-lg hover:brightness-110 flex-1 transition-colors text-center shadow-[0_0_15px_rgba(255,185,95,0.2)]"
-              >
+              <button onClick={applyCustomTime}
+                className="px-4 py-3 bg-secondary text-on-secondary text-sm font-bold rounded-lg hover:brightness-110 flex-1 transition-colors text-center shadow-[0_0_15px_rgba(255,185,95,0.2)]">
                 Aplicar
               </button>
-              <button 
-                onClick={() => setIsTimeModalOpen(false)} 
-                className="px-4 py-3 border border-outline-variant/40 text-on-surface-variant rounded-lg hover:bg-surface-container-highest transition-colors flex items-center justify-center"
-              >
+              <button onClick={() => setIsTimeModalOpen(false)}
+                className="px-4 py-3 border border-outline-variant/40 text-on-surface-variant rounded-lg hover:bg-surface-container-highest transition-colors flex items-center justify-center">
                 <X size={20} />
               </button>
             </div>
@@ -858,66 +756,43 @@ export default function App() {
 
       {/* Location Edit Modal */}
       {isLocationModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
           <div className="bg-surface-container border border-outline-variant/50 rounded-xl w-full max-w-sm p-6 shadow-2xl relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-secondary"></div>
+            <div className="absolute top-0 left-0 w-full h-1 bg-secondary" />
             <h3 className="text-xl font-bold text-on-surface mb-6 flex items-center gap-2">
-              <MapPin size={20} className="text-secondary" /> 
-              Editar Ubicación
+              <MapPin size={20} className="text-secondary" /> Editar Ubicación
             </h3>
-            
             <div className="space-y-4">
-              <div>
-                <label className="block text-[11px] font-bold tracking-widest text-on-surface-variant uppercase mb-2">Coordenadas</label>
-                <input 
-                  type="text" 
-                  value={editLocationDetails.coords} 
-                  onChange={e => setEditLocationDetails({...editLocationDetails, coords: e.target.value})} 
-                  placeholder="33°36'21.6&quot;S 70°52'44.4&quot;W"
-                  className="w-full bg-surface-container-high border border-outline-variant/40 rounded-lg p-3 text-on-surface focus:border-secondary transition-colors outline-none font-mono text-sm" 
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-bold tracking-widest text-on-surface-variant uppercase mb-2">Dirección</label>
-                <input 
-                  type="text" 
-                  value={editLocationDetails.address} 
-                  onChange={e => setEditLocationDetails({...editLocationDetails, address: e.target.value})} 
-                  className="w-full bg-surface-container-high border border-outline-variant/40 rounded-lg p-3 text-on-surface focus:border-secondary transition-colors outline-none text-sm" 
-                  placeholder="AVENIDA BERLÍN 34"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-bold tracking-widest text-on-surface-variant uppercase mb-2">Ciudad / Sector</label>
-                <input 
-                  type="text" 
-                  value={editLocationDetails.city} 
-                  onChange={e => setEditLocationDetails({...editLocationDetails, city: e.target.value})} 
-                  className="w-full bg-surface-container-high border border-outline-variant/40 rounded-lg p-3 text-on-surface focus:border-secondary transition-colors outline-none text-sm" 
-                  placeholder="San Miguel"
-                />
-              </div>
+              {[
+                { key: 'coords', label: 'Coordenadas', placeholder: "33°36'21.6\"S 70°52'44.4\"W", mono: true },
+                { key: 'address', label: 'Dirección', placeholder: 'AVENIDA BERLÍN 34', mono: false },
+                { key: 'city', label: 'Ciudad / Sector', placeholder: 'San Miguel', mono: false },
+              ].map(({ key, label, placeholder, mono }) => (
+                <div key={key}>
+                  <label className="block text-[11px] font-bold tracking-widest text-on-surface-variant uppercase mb-2">{label}</label>
+                  <input
+                    type="text"
+                    value={editLocationDetails[key as keyof typeof editLocationDetails]}
+                    onChange={e => setEditLocationDetails({ ...editLocationDetails, [key]: e.target.value })}
+                    placeholder={placeholder}
+                    className={`w-full bg-surface-container-high border border-outline-variant/40 rounded-lg p-3 text-on-surface focus:border-secondary transition-colors outline-none text-sm ${mono ? 'font-mono' : ''}`}
+                  />
+                </div>
+              ))}
             </div>
-            
             <div className="mt-8 flex gap-3">
-              <button 
-                onClick={applyCustomLocation} 
-                className="px-4 py-3 bg-secondary text-on-secondary text-sm font-bold rounded-lg hover:brightness-110 flex-1 transition-colors text-center shadow-[0_0_15px_rgba(255,185,95,0.2)]"
-              >
+              <button onClick={applyCustomLocation}
+                className="px-4 py-3 bg-secondary text-on-secondary text-sm font-bold rounded-lg hover:brightness-110 flex-1 transition-colors text-center shadow-[0_0_15px_rgba(255,185,95,0.2)]">
                 Aplicar
               </button>
-              <button 
-                onClick={() => setIsLocationModalOpen(false)} 
-                className="px-4 py-3 border border-outline-variant/40 text-on-surface-variant rounded-lg hover:bg-surface-container-highest transition-colors flex items-center justify-center shrink-0"
-              >
+              <button onClick={() => setIsLocationModalOpen(false)}
+                className="px-4 py-3 border border-outline-variant/40 text-on-surface-variant rounded-lg hover:bg-surface-container-highest transition-colors flex items-center justify-center shrink-0">
                 <X size={20} />
               </button>
             </div>
           </div>
         </div>
       )}
-
     </div>
   );
 }
-
