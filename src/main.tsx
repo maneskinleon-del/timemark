@@ -1,10 +1,7 @@
-import {StrictMode} from 'react';
-import {createRoot} from 'react-dom/client';
+import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+// StrictMode removido intencionalmente: montaba los componentes 2 veces en desarrollo,
+// causando race conditions en drawWatermark (procesamiento asíncrono de canvas + cola de imágenes).
+createRoot(document.getElementById('root')!).render(<App />);
