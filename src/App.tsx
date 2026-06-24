@@ -17,6 +17,18 @@ import {
   X
 } from 'lucide-react';
 
+// Tipos para la cola de procesamiento
+interface QueueItem {
+  file: File;
+  id: string;
+}
+
+interface BatchProcessState {
+  queue: QueueItem[];
+  isProcessing: boolean;
+  currentIndex: number;
+}
+
 export default function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [originalImage, setOriginalImage] = useState<string | null>(null);
@@ -52,9 +64,12 @@ export default function App() {
 
   const customTimestampRef = useRef<string | null>(null);
 
-  // Cola de imágenes como REF (no estado) para que nextInQueue siempre vea el valor real
-  const imageQueueRef = useRef<File[]>([]);
-  const [imageQueueLength, setImageQueueLength] = useState(0); // solo para la UI
+  // Estado unificado para la cola de procesamiento por lotes
+  const [batchState, setBatchState] = useState<BatchProcessState>({
+    queue: [],
+    isProcessing: false,
+    currentIndex: 0
+  });
 
   // drawId: cancela renders obsoletos cuando llegan imágenes rápido
   const drawIdRef = useRef(0);
@@ -246,8 +261,8 @@ export default function App() {
     img.src = imgSrc;
   };
 
+  // Procesa un archivo individual de la cola
   const processFile = (file: File) => {
-    // Incrementar drawId ANTES de leer el archivo: cancela cualquier render en curso
     const myDrawId = ++drawIdRef.current;
 
     const reader = new FileReader();
@@ -260,38 +275,50 @@ export default function App() {
       setLocation(updatedLocation);
       locationRef.current = updatedLocation;
 
-      // Llamada directa con el drawId reservado y valores correctos
       drawWatermark(imgSrc, logoImageRef.current, updatedLocation, myDrawId);
     };
     reader.readAsDataURL(file);
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []) as File[];
-    if (files.length > 0) {
-      // Guardar resto en ref (no estado) para que nextInQueue siempre vea el valor real
-      imageQueueRef.current = files.slice(1);
-      setImageQueueLength(files.length - 1);
-      processFile(files[0]);
-    }
-    e.target.value = '';
+  // Agrupa archivos a la cola y comienza procesamiento
+  const enqueueBatch = (files: File[]) => {
+    const newItems: QueueItem[] = files.map(file => ({
+      file,
+      id: `${Date.now()}-${Math.random()}`
+    }));
+
+    setBatchState(prev => {
+      const updatedQueue = [...prev.queue, ...newItems];
+      return {
+        queue: updatedQueue,
+        isProcessing: prev.isProcessing || updatedQueue.length > 0,
+        currentIndex: prev.currentIndex
+      };
+    });
   };
 
-  const nextInQueue = () => {
-    const queue = imageQueueRef.current;
-    if (queue.length > 0) {
-      const nextFile = queue[0];
-      imageQueueRef.current = queue.slice(1);
-      setImageQueueLength(queue.length - 1);
-      processFile(nextFile);
-    } else {
-      imageQueueRef.current = [];
-      setImageQueueLength(0);
-      setOriginalImage(null);
-      setPreviewImage(null);
-    }
+  // Procesa el siguiente elemento de la cola
+  const processNextInBatch = () => {
+    setBatchState(prev => {
+      const nextIndex = prev.currentIndex + 1;
+      const hasMore = nextIndex < prev.queue.length;
+
+      if (hasMore) {
+        processFile(prev.queue[nextIndex].file);
+      } else {
+        setOriginalImage(null);
+        setPreviewImage(null);
+      }
+
+      return {
+        queue: prev.queue,
+        isProcessing: hasMore,
+        currentIndex: nextIndex
+      };
+    });
   };
 
+  // Guarda la imagen actual y procesa la siguiente
   const handleSave = () => {
     if (!previewImage) return;
 
@@ -314,7 +341,27 @@ export default function App() {
       address: `${location.address}, ${location.city}`
     }, ...prev]);
 
-    nextInQueue();
+    processNextInBatch();
+  };
+
+  // Descarta la imagen actual y procesa la siguiente
+  const handleDiscard = () => {
+    processNextInBatch();
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []) as File[];
+    if (files.length > 0) {
+      enqueueBatch(files);
+      processFile(files[0]);
+      
+      setBatchState(prev => ({
+        queue: prev.queue,
+        isProcessing: true,
+        currentIndex: 0
+      }));
+    }
+    e.target.value = '';
   };
 
   const openTimeModal = () => {
@@ -360,6 +407,9 @@ export default function App() {
     setIsLocationModalOpen(false);
   };
 
+  // Cantidad de elementos pendientes en la cola
+  const queueLength = Math.max(0, batchState.queue.length - batchState.currentIndex - 1);
+
   return (
     <div className="flex h-screen overflow-hidden relative">
       {/* Sidebar - Desktop */}
@@ -389,7 +439,7 @@ export default function App() {
               <button
                 key={id}
                 onClick={() => setActiveTab(id)}
-                className={`w-full flex items-center gap-4 px-4 py-3 rounded-lg font-bold transition-colors text-left ${activeTab === id ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-bright'}`}
+                className={`w-full flex items-center gap-4 px-4 py-3 rounded-lg font-bold transition-colors text-left ${activeTab === id ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
               >
                 <Icon size={20} />
                 {label}
@@ -452,21 +502,21 @@ export default function App() {
                   <h3 className="text-[11px] font-bold tracking-[0.1em] text-on-surface-variant uppercase mb-4">Operaciones de Campo</h3>
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="w-full flex items-center justify-center md:justify-between px-6 py-4 bg-secondary text-on-secondary font-bold rounded-lg hover:brightness-110 active:scale-95 transition-all shadow-lg shadow-secondary/10"
+                    className="w-full flex items-center justify-center md:justify-between px-6 py-4 bg-secondary text-on-secondary font-bold rounded-lg hover:brightness-110 active:scale-95 transition-all"
                   >
                     <span className="flex items-center gap-3"><Camera size={20} /> Tomar foto</span>
                     <span className="hidden md:inline">→</span>
                   </button>
                   <button
                     onClick={() => galleryInputRef.current?.click()}
-                    className="w-full flex items-center justify-center gap-3 px-6 py-4 border border-outline-variant bg-surface-container-low text-on-surface font-bold rounded-lg hover:bg-surface-variant/50 active:scale-95 transition-all"
+                    className="w-full flex items-center justify-center gap-3 px-6 py-4 border border-outline-variant bg-surface-container-low text-on-surface font-bold rounded-lg hover:bg-surface-variant transition-colors"
                   >
                     <ImageIcon size={20} /> Seleccionar de galería
                   </button>
                   <div className="flex gap-2 w-full">
                     <button
                       onClick={() => logoInputRef.current?.click()}
-                      className="flex-1 flex items-center justify-center gap-3 px-6 py-4 border border-outline-variant border-dashed text-on-surface-variant font-medium rounded-lg hover:border-secondary hover:text-secondary transition-all"
+                      className="flex-1 flex items-center justify-center gap-3 px-6 py-4 border border-outline-variant border-dashed text-on-surface-variant font-medium rounded-lg hover:border-secondary hover:text-on-surface transition-colors"
                     >
                       <Upload size={20} /> {logoImage ? 'Cambiar logo' : 'Cargar logo'}
                     </button>
@@ -541,16 +591,16 @@ export default function App() {
                           <Clock size={16} /> Hora
                         </button>
                         <button
-                          onClick={nextInQueue}
-                          className="flex-1 min-w-[100px] bg-surface-container-highest text-on-surface rounded-lg font-bold border border-outline-variant/50 hover:bg-surface-variant transition-colors px-2"
+                          onClick={handleDiscard}
+                          className="flex-1 min-w-[100px] bg-surface-container-highest text-on-surface rounded-lg font-bold border border-outline-variant/50 hover:bg-surface-variant transition-colors py-2.5"
                         >
-                          {imageQueueLength > 0 ? `Descartar (+${imageQueueLength})` : 'Descartar'}
+                          {queueLength > 0 ? `Descartar (+${queueLength})` : 'Descartar'}
                         </button>
                         <button
                           onClick={handleSave}
-                          className="flex-1 min-w-[150px] bg-secondary text-on-secondary rounded-lg font-bold shadow-[0_0_15px_rgba(255,185,95,0.2)] hover:brightness-110 active:scale-95 transition-all px-2"
+                          className="flex-1 min-w-[150px] bg-secondary text-on-secondary rounded-lg font-bold shadow-[0_0_15px_rgba(255,185,95,0.2)] hover:brightness-110 active:scale-95 transition-all py-2.5"
                         >
-                          {imageQueueLength > 0 ? 'Guardar y Siguiente' : 'Guardar'}
+                          {queueLength > 0 ? 'Guardar y Siguiente' : 'Guardar'}
                         </button>
                       </div>
                     </div>
@@ -591,7 +641,7 @@ export default function App() {
                   <FileText size={64} className="mb-6 opacity-50" />
                   <p className="text-lg">No hay registros guardados en este turno.</p>
                   <p className="mt-2 text-sm max-w-md text-center">Toma una foto en el Panel de Control y guárdala para verla aquí.</p>
-                  <button onClick={() => setActiveTab('dashboard')} className="mt-8 px-6 py-2 border border-outline-variant rounded-lg text-on-surface hover:bg-surface-container-highest transition-colors uppercase text-xs font-bold tracking-widest">
+                  <button onClick={() => setActiveTab('dashboard')} className="mt-8 px-6 py-2 border border-outline-variant rounded-lg text-on-surface hover:bg-surface-container-highest transition-colors">
                     Ir al Panel de Control
                   </button>
                 </div>
@@ -652,7 +702,7 @@ export default function App() {
                       <label className="block text-[11px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Identificador de Unidad</label>
                       <input
                         type="text" value={unitName} onChange={e => setUnitName(e.target.value)}
-                        className="w-full bg-surface-container-high border border-outline-variant/50 rounded-lg p-3.5 text-on-surface focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-all font-mono"
+                        className="w-full bg-surface-container-high border border-outline-variant/50 rounded-lg p-3.5 text-on-surface focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-colors"
                       />
                     </div>
                     <div>
@@ -660,7 +710,7 @@ export default function App() {
                       <select
                         value={settings.resolution}
                         onChange={(e) => setSettings(s => ({ ...s, resolution: e.target.value }))}
-                        className="w-full bg-surface-container-high border border-outline-variant/50 rounded-lg p-3.5 text-on-surface focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-all appearance-none cursor-pointer"
+                        className="w-full bg-surface-container-high border border-outline-variant/50 rounded-lg p-3.5 text-on-surface focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-colors"
                       >
                         <option value="1080">Alta (1080p - Recomendada)</option>
                         <option value="720">Media (720p - Ahorro de datos)</option>
@@ -682,13 +732,13 @@ export default function App() {
                       <div
                         key={key}
                         onClick={() => setSettings(s => ({ ...s, [key]: !s[key as keyof typeof s] }))}
-                        className="flex items-center justify-between p-3 rounded-lg hover:bg-surface-container-high transition-colors cursor-pointer border border-transparent hover:border-outline-variant/20"
+                        className="flex items-center justify-between p-3 rounded-lg hover:bg-surface-container-high transition-colors cursor-pointer border border-transparent hover:border-outline-variant"
                       >
                         <div>
                           <p className="text-on-surface font-bold text-sm">{label}</p>
                           <p className="text-[11px] text-on-surface-variant mt-0.5">{desc}</p>
                         </div>
-                        <div className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${settings[key as keyof typeof settings] ? 'bg-secondary' : 'bg-surface-container-highest'}`}>
+                        <div className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${settings[key as keyof typeof settings] ? 'bg-secondary' : 'bg-surface-container-high'}`}>
                           <span className={`inline-block w-4 h-4 bg-white rounded-full transition-transform ${settings[key as keyof typeof settings] ? 'translate-x-6' : 'translate-x-1'}`} />
                         </div>
                       </div>
