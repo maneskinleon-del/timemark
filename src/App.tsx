@@ -302,14 +302,6 @@ export default function App() {
     setBatchState(prev => {
       const nextIndex = prev.currentIndex + 1;
       const hasMore = nextIndex < prev.queue.length;
-
-      if (hasMore) {
-        processFile(prev.queue[nextIndex].file);
-      } else {
-        setOriginalImage(null);
-        setPreviewImage(null);
-      }
-
       return {
         queue: prev.queue,
         isProcessing: hasMore,
@@ -317,6 +309,16 @@ export default function App() {
       };
     });
   };
+
+  // Efecto que dispara el procesamiento cuando cambia la cola
+  useEffect(() => {
+    if (batchState.isProcessing && batchState.currentIndex < batchState.queue.length) {
+      processFile(batchState.queue[batchState.currentIndex].file);
+    } else if (batchState.queue.length > 0 && batchState.currentIndex >= batchState.queue.length) {
+      setOriginalImage(null);
+      setPreviewImage(null);
+    }
+  }, [batchState.isProcessing, batchState.currentIndex, batchState.queue.length]);
 
   // Guarda la imagen actual y procesa la siguiente
   const handleSave = () => {
@@ -353,8 +355,6 @@ export default function App() {
     const files = Array.from(e.target.files || []) as File[];
     if (files.length > 0) {
       enqueueBatch(files);
-      processFile(files[0]);
-      
       setBatchState(prev => ({
         queue: prev.queue,
         isProcessing: true,
