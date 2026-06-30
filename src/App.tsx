@@ -122,10 +122,10 @@ export default function App() {
     }
   }, []);
 
-  // Redibujar SOLO cuando cambia logo o ubicación manualmente (no cuando llega imagen nueva)
+  // Redibujar SOLO cuando cambia logo o ubicación manualmente — sin newDrawId (reusa el actual)
   useEffect(() => {
     if (originalImage) {
-      drawWatermark(originalImage, logoImageRef.current, locationRef.current);
+      drawWatermark(originalImage, logoImageRef.current, locationRef.current, drawIdRef.current);
     }
   }, [logoImage, location.coords, location.address]);
 
@@ -143,9 +143,9 @@ export default function App() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${now.toLocaleTimeString('en-US', { hour12: false })}`;
   };
 
-  // drawWatermark recibe un drawId: si para cuando termina el canvas ya hay uno más nuevo, descarta
-  const drawWatermark = (imgSrc: string, logoSrc: string | null, loc: typeof location, myDrawId?: number) => {
-    const currentDrawId = myDrawId ?? ++drawIdRef.current;
+  // drawWatermark recibe un drawId OBLIGATORIO: si para cuando termina el canvas ya hay uno más nuevo, descarta
+  const drawWatermark = (imgSrc: string, logoSrc: string | null, loc: typeof location, myDrawId: number) => {
+    const currentDrawId = myDrawId;
 
     const img = new Image();
     img.crossOrigin = "anonymous";
@@ -297,15 +297,15 @@ export default function App() {
     });
   };
 
-  // Procesa el siguiente elemento de la cola
-  const processNextInBatch = () => {
+  // Avanza el índice de la cola al procesar la siguiente imagen
+  const advanceBatchIndex = () => {
     setBatchState(prev => {
       const nextIndex = prev.currentIndex + 1;
       const hasMore = nextIndex < prev.queue.length;
       return {
         queue: prev.queue,
         isProcessing: hasMore,
-        currentIndex: nextIndex
+        currentIndex: hasMore ? nextIndex : nextIndex
       };
     });
   };
@@ -318,7 +318,7 @@ export default function App() {
       setOriginalImage(null);
       setPreviewImage(null);
     }
-  }, [batchState.isProcessing, batchState.currentIndex, batchState.queue.length]);
+  }, [batchState.isProcessing, batchState.currentIndex, batchState.queue.length, batchState.queue]);
 
   // Guarda la imagen actual y procesa la siguiente
   const handleSave = () => {
@@ -343,23 +343,18 @@ export default function App() {
       address: `${location.address}, ${location.city}`
     }, ...prev]);
 
-    processNextInBatch();
+    advanceBatchIndex();
   };
 
   // Descarta la imagen actual y procesa la siguiente
   const handleDiscard = () => {
-    processNextInBatch();
+    advanceBatchIndex();
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []) as File[];
     if (files.length > 0) {
       enqueueBatch(files);
-      setBatchState(prev => ({
-        queue: prev.queue,
-        isProcessing: true,
-        currentIndex: 0
-      }));
     }
     e.target.value = '';
   };
