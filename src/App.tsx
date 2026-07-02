@@ -328,17 +328,23 @@ export default function App() {
   const handleSave = () => {
     if (!previewImage || isRendering) return;
 
-    if (settings.saveOriginal && originalImage) {
+    if (settingsRef.current.saveOriginal && originalImage) {
       const linkOriginal = document.createElement('a');
       linkOriginal.download = `original_${Date.now()}.jpg`;
       linkOriginal.href = originalImage;
       linkOriginal.click();
+      setTimeout(() => {
+        const link = document.createElement('a');
+        link.download = `timemark_${Date.now()}.jpg`;
+        link.href = previewImage;
+        link.click();
+      }, 200);
+    } else {
+      const link = document.createElement('a');
+      link.download = `timemark_${Date.now()}.jpg`;
+      link.href = previewImage;
+      link.click();
     }
-
-    const link = document.createElement('a');
-    link.download = `timemark_${Date.now()}.jpg`;
-    link.href = previewImage;
-    link.click();
 
     setLogs(prev => [{
       id: Date.now(),
