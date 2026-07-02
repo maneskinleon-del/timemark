@@ -26,7 +26,6 @@ interface QueueItem {
 interface BatchProcessState {
   queue: QueueItem[];
   isProcessing: boolean;
-  currentIndex: number;
 }
 
 export default function App() {
@@ -76,8 +75,7 @@ export default function App() {
   // Estado unificado para la cola de procesamiento por lotes
   const [batchState, setBatchState] = useState<BatchProcessState>({
     queue: [],
-    isProcessing: false,
-    currentIndex: 0
+    isProcessing: false
   });
 
   // drawId: cancela renders obsoletos cuando llegan imágenes rápido
@@ -134,6 +132,14 @@ export default function App() {
       drawWatermark(originalImage, logoImageRef.current, locationRef.current, drawIdRef.current);
     }
   }, [logoImage, location.coords, location.address]);
+
+  // Limpiar imágenes cuando termina el batch
+  useEffect(() => {
+    if (!batchState.isProcessing && batchState.queue.length === 0 && previewImage) {
+      setOriginalImage(null);
+      setPreviewImage(null);
+    }
+  }, [batchState.isProcessing, batchState.queue.length]);
 
   const buildTimestamp = (): string => {
     const ts = customTimestampRef.current;
@@ -268,6 +274,11 @@ export default function App() {
         finishDrawing(null);
       }
     };
+    img.onerror = () => {
+      console.error('Imagen no válida o corrupta:', imgSrc.substring(0, 50));
+      setIsRendering(false);
+      advanceBatchIndex();
+    };
     img.src = imgSrc;
   };
 
@@ -288,6 +299,11 @@ export default function App() {
 
       drawWatermark(imgSrc, logoImageRef.current, updatedLocation, myDrawId);
     };
+    reader.onerror = () => {
+      console.error('No se pudo leer el archivo:', file.name);
+      setIsRendering(false);
+      advanceBatchIndex();
+    };
     reader.readAsDataURL(file);
   };
 
@@ -300,8 +316,7 @@ export default function App() {
 
     setBatchState(prev => ({
       queue: [...prev.queue, ...newItems],
-      isProcessing: true,
-      currentIndex: 0
+      isProcessing: true
     }));
   };
 
@@ -311,8 +326,7 @@ export default function App() {
       const remaining = prev.queue.slice(1);
       return {
         queue: remaining,
-        isProcessing: remaining.length > 0,
-        currentIndex: 0
+        isProcessing: remaining.length > 0
       };
     });
   };
@@ -597,7 +611,7 @@ export default function App() {
                         <button
                           onClick={openTimeModal}
                           disabled={isRendering}
-                          className={`flex-1 min-w-[100px] border border-outline-variant/50 hover:bg-surface-container text-on-surface rounded-lg font-bold py-2.5 transition-colors flex justify-center items-center gap-2 ${isRendering ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          className={`flex-1 min-w-[100px] border border-outline-variant/50 hover:bg-surface-container text-on-surface rounded-lg font-bold py-2.5 transition-colors flex justify-center gap-2 ${isRendering ? 'opacity-50 cursor-not-allowed' : ''}`}
                         >
                           <Clock size={16} /> Hora
                         </button>
@@ -745,7 +759,7 @@ export default function App() {
                       <div
                         key={key}
                         onClick={() => setSettings(s => ({ ...s, [key]: !s[key as keyof typeof s] }))}
-                        className="flex items-center justify-between p-3 rounded-lg hover:bg-surface-container-high transition-colors cursor-pointer border border-transparent hover:border-outline-variant"
+                        className="flex items-center justify-between p-3 rounded-lg hover:bg-surface-container-high transition-colors cursor-pointer border border-transparent hover:border-outline-variant/30"
                       >
                         <div>
                           <p className="text-on-surface font-bold text-sm">{label}</p>
