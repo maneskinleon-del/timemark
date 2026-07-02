@@ -51,6 +51,15 @@ export default function App() {
   const logoImageRef = useRef<string | null>(null);
   useEffect(() => { logoImageRef.current = logoImage; }, [logoImage]);
 
+  const [settings, setSettings] = useState({
+    strictDarkMode: true,
+    saveOriginal: false,
+    resolution: "1080"
+  });
+
+  const settingsRef = useRef(settings);
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
@@ -74,11 +83,8 @@ export default function App() {
   // drawId: cancela renders obsoletos cuando llegan imágenes rápido
   const drawIdRef = useRef(0);
 
-  const [settings, setSettings] = useState({
-    strictDarkMode: true,
-    saveOriginal: false,
-    resolution: "1080"
-  });
+  // Nuevo estado para bloquear guardado mientras renderiza
+  const [isRendering, setIsRendering] = useState(false);
 
   // Reloj en vivo
   useEffect(() => {
@@ -157,11 +163,14 @@ export default function App() {
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      canvas.width = img.width;
-      canvas.height = img.height;
+      // Aplicar resolución según configuración
+      const maxDim = Number(settingsRef.current.resolution) || 1080;
+      const scaleDown = Math.min(1, maxDim / Math.max(img.width, img.height));
+      canvas.width = Math.round(img.width * scaleDown);
+      canvas.height = Math.round(img.height * scaleDown);
       const scale = canvas.width / 1080;
 
-      ctx.drawImage(img, 0, 0);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
       // Top Left: "TIMEMARK SYSTEM"
       ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
@@ -246,7 +255,8 @@ export default function App() {
           ctx2.textAlign = 'left';
         }
 
-        setPreviewImage(canvas.toDataURL('image/jpeg', 0.95));
+        setPreviewImage(canvas.toDataURL('image/jpeg', 0.92));
+        if (currentDrawId === drawIdRef.current) setIsRendering(false);
       };
 
       if (logoSrc) {
@@ -264,6 +274,7 @@ export default function App() {
   // Procesa un archivo individual de la cola
   const processFile = (file: File) => {
     const myDrawId = ++drawIdRef.current;
+    setIsRendering(true);
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -287,42 +298,35 @@ export default function App() {
       id: `${Date.now()}-${Math.random()}`
     }));
 
-    setBatchState(prev => {
-      const updatedQueue = [...prev.queue, ...newItems];
-      return {
-        queue: updatedQueue,
-        isProcessing: prev.isProcessing || updatedQueue.length > 0,
-        currentIndex: prev.currentIndex
-      };
-    });
+    setBatchState(prev => ({
+      queue: [...prev.queue, ...newItems],
+      isProcessing: true,
+      currentIndex: 0
+    }));
   };
 
-  // Avanza el índice de la cola al procesar la siguiente imagen
+  // Avanza la cola: saca el elemento procesado y reseta a 0
   const advanceBatchIndex = () => {
     setBatchState(prev => {
-      const nextIndex = prev.currentIndex + 1;
-      const hasMore = nextIndex < prev.queue.length;
+      const remaining = prev.queue.slice(1);
       return {
-        queue: prev.queue,
-        isProcessing: hasMore,
-        currentIndex: hasMore ? nextIndex : nextIndex
+        queue: remaining,
+        isProcessing: remaining.length > 0,
+        currentIndex: 0
       };
     });
   };
 
   // Efecto que dispara el procesamiento cuando cambia la cola
   useEffect(() => {
-    if (batchState.isProcessing && batchState.currentIndex < batchState.queue.length) {
-      processFile(batchState.queue[batchState.currentIndex].file);
-    } else if (batchState.queue.length > 0 && batchState.currentIndex >= batchState.queue.length) {
-      setOriginalImage(null);
-      setPreviewImage(null);
+    if (batchState.isProcessing && batchState.queue.length > 0) {
+      processFile(batchState.queue[0].file);
     }
-  }, [batchState.isProcessing, batchState.currentIndex, batchState.queue.length, batchState.queue]);
+  }, [batchState.isProcessing, batchState.queue]);
 
   // Guarda la imagen actual y procesa la siguiente
   const handleSave = () => {
-    if (!previewImage) return;
+    if (!previewImage || isRendering) return;
 
     if (settings.saveOriginal && originalImage) {
       const linkOriginal = document.createElement('a');
@@ -348,6 +352,7 @@ export default function App() {
 
   // Descarta la imagen actual y procesa la siguiente
   const handleDiscard = () => {
+    if (isRendering) return;
     advanceBatchIndex();
   };
 
@@ -403,7 +408,7 @@ export default function App() {
   };
 
   // Cantidad de elementos pendientes en la cola
-  const queueLength = Math.max(0, batchState.queue.length - batchState.currentIndex - 1);
+  const queueLength = Math.max(0, batchState.queue.length - 1);
 
   return (
     <div className="flex h-screen overflow-hidden relative">
@@ -497,28 +502,32 @@ export default function App() {
                   <h3 className="text-[11px] font-bold tracking-[0.1em] text-on-surface-variant uppercase mb-4">Operaciones de Campo</h3>
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="w-full flex items-center justify-center md:justify-between px-6 py-4 bg-secondary text-on-secondary font-bold rounded-lg hover:brightness-110 active:scale-95 transition-all"
+                    disabled={isRendering}
+                    className={`w-full flex items-center justify-center md:justify-between px-6 py-4 bg-secondary text-on-secondary font-bold rounded-lg hover:brightness-110 active:scale-95 transition-all ${isRendering ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
                     <span className="flex items-center gap-3"><Camera size={20} /> Tomar foto</span>
                     <span className="hidden md:inline">→</span>
                   </button>
                   <button
                     onClick={() => galleryInputRef.current?.click()}
-                    className="w-full flex items-center justify-center gap-3 px-6 py-4 border border-outline-variant bg-surface-container-low text-on-surface font-bold rounded-lg hover:bg-surface-variant transition-colors"
+                    disabled={isRendering}
+                    className={`w-full flex items-center justify-center gap-3 px-6 py-4 border border-outline-variant bg-surface-container-low text-on-surface font-bold rounded-lg hover:bg-surface-variant transition-all ${isRendering ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
                     <ImageIcon size={20} /> Seleccionar de galería
                   </button>
                   <div className="flex gap-2 w-full">
                     <button
                       onClick={() => logoInputRef.current?.click()}
-                      className="flex-1 flex items-center justify-center gap-3 px-6 py-4 border border-outline-variant border-dashed text-on-surface-variant font-medium rounded-lg hover:border-secondary hover:text-on-surface transition-colors"
+                      disabled={isRendering}
+                      className={`flex-1 flex items-center justify-center gap-3 px-6 py-4 border border-outline-variant border-dashed text-on-surface-variant font-medium rounded-lg hover:border-secondary transition-all ${isRendering ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
                       <Upload size={20} /> {logoImage ? 'Cambiar logo' : 'Cargar logo'}
                     </button>
                     {logoImage && (
                       <button
                         onClick={() => { setLogoImage(null); localStorage.removeItem('timemark_logo'); }}
-                        className="px-4 py-4 border border-error/50 text-error rounded-lg hover:bg-error/10 transition-colors flex items-center justify-center shrink-0"
+                        disabled={isRendering}
+                        className={`px-4 py-4 border border-error/50 text-error rounded-lg hover:bg-error/10 transition-colors flex items-center justify-center shrink-0 ${isRendering ? 'opacity-50 cursor-not-allowed' : ''}`}
                         title="Eliminar logo"
                       >
                         <X size={20} />
@@ -564,7 +573,7 @@ export default function App() {
                     ) : (
                       <div className="text-center text-on-surface-variant flex flex-col items-center gap-4">
                         <Camera size={48} className="opacity-20" />
-                        <p className="font-mono text-sm">Esperando captura de imagen...</p>
+                        <p className="font-mono text-sm">{isRendering ? 'Procesando marca de agua...' : 'Esperando captura de imagen...'}</p>
                       </div>
                     )}
                   </div>
@@ -581,21 +590,24 @@ export default function App() {
                       <div className="flex flex-wrap w-full md:w-auto gap-3 mt-4 md:mt-0">
                         <button
                           onClick={openTimeModal}
-                          className="flex-1 min-w-[100px] border border-outline-variant/50 hover:bg-surface-container text-on-surface rounded-lg font-bold py-2.5 transition-colors flex justify-center items-center gap-2"
+                          disabled={isRendering}
+                          className={`flex-1 min-w-[100px] border border-outline-variant/50 hover:bg-surface-container text-on-surface rounded-lg font-bold py-2.5 transition-colors flex justify-center items-center gap-2 ${isRendering ? 'opacity-50 cursor-not-allowed' : ''}`}
                         >
                           <Clock size={16} /> Hora
                         </button>
                         <button
                           onClick={handleDiscard}
-                          className="flex-1 min-w-[100px] bg-surface-container-highest text-on-surface rounded-lg font-bold border border-outline-variant/50 hover:bg-surface-variant transition-colors py-2.5"
+                          disabled={isRendering}
+                          className={`flex-1 min-w-[100px] bg-surface-container-highest text-on-surface rounded-lg font-bold border border-outline-variant/50 hover:bg-surface-variant transition-colors ${isRendering ? 'opacity-50 cursor-not-allowed' : ''}`}
                         >
                           {queueLength > 0 ? `Descartar (+${queueLength})` : 'Descartar'}
                         </button>
                         <button
                           onClick={handleSave}
-                          className="flex-1 min-w-[150px] bg-secondary text-on-secondary rounded-lg font-bold shadow-[0_0_15px_rgba(255,185,95,0.2)] hover:brightness-110 active:scale-95 transition-all py-2.5"
+                          disabled={isRendering}
+                          className={`flex-1 min-w-[150px] bg-secondary text-on-secondary rounded-lg font-bold shadow-[0_0_15px_rgba(255,185,95,0.2)] hover:brightness-110 active:scale-95 transition-all ${isRendering ? 'opacity-50 cursor-not-allowed' : ''}`}
                         >
-                          {queueLength > 0 ? 'Guardar y Siguiente' : 'Guardar'}
+                          {isRendering ? 'Procesando…' : (queueLength > 0 ? 'Guardar y Siguiente' : 'Guardar')}
                         </button>
                       </div>
                     </div>
@@ -697,7 +709,7 @@ export default function App() {
                       <label className="block text-[11px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Identificador de Unidad</label>
                       <input
                         type="text" value={unitName} onChange={e => setUnitName(e.target.value)}
-                        className="w-full bg-surface-container-high border border-outline-variant/50 rounded-lg p-3.5 text-on-surface focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-colors"
+                        className="w-full bg-surface-container-high border border-outline-variant/50 rounded-lg p-3.5 text-on-surface focus:border-secondary focus:ring-1 focus:ring-secondary outline-none"
                       />
                     </div>
                     <div>
@@ -705,7 +717,7 @@ export default function App() {
                       <select
                         value={settings.resolution}
                         onChange={(e) => setSettings(s => ({ ...s, resolution: e.target.value }))}
-                        className="w-full bg-surface-container-high border border-outline-variant/50 rounded-lg p-3.5 text-on-surface focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-colors"
+                        className="w-full bg-surface-container-high border border-outline-variant/50 rounded-lg p-3.5 text-on-surface focus:border-secondary focus:ring-1 focus:ring-secondary outline-none"
                       >
                         <option value="1080">Alta (1080p - Recomendada)</option>
                         <option value="720">Media (720p - Ahorro de datos)</option>
@@ -733,7 +745,7 @@ export default function App() {
                           <p className="text-on-surface font-bold text-sm">{label}</p>
                           <p className="text-[11px] text-on-surface-variant mt-0.5">{desc}</p>
                         </div>
-                        <div className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${settings[key as keyof typeof settings] ? 'bg-secondary' : 'bg-surface-container-high'}`}>
+                        <div className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${settings[key as keyof typeof settings] ? 'bg-secondary' : 'bg-surface-container-highest'}`}>
                           <span className={`inline-block w-4 h-4 bg-white rounded-full transition-transform ${settings[key as keyof typeof settings] ? 'translate-x-6' : 'translate-x-1'}`} />
                         </div>
                       </div>
@@ -831,7 +843,8 @@ export default function App() {
                 Aplicar
               </button>
               <button onClick={() => setIsLocationModalOpen(false)}
-                className="px-4 py-3 border border-outline-variant/40 text-on-surface-variant rounded-lg hover:bg-surface-container-highest transition-colors flex items-center justify-center shrink-0">
+                className="px-4 py-3 border border-outline-variant/40 text-on-surface-variant rounded-lg hover:bg-surface-container-highest transition-colors flex items-center justify-center shrink-0"
+              >
                 <X size={20} />
               </button>
             </div>
