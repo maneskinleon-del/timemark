@@ -129,6 +129,7 @@ export default function App() {
   // Redibujar SOLO cuando cambia logo o ubicación manualmente — sin newDrawId (reusa el actual)
   useEffect(() => {
     if (originalImage) {
+      setIsRendering(true);
       drawWatermark(originalImage, logoImageRef.current, locationRef.current, drawIdRef.current);
     }
   }, [logoImage, location.coords, location.address]);
@@ -275,6 +276,7 @@ export default function App() {
       }
     };
     img.onerror = () => {
+      if (currentDrawId !== drawIdRef.current) return; // callback obsoleto, ignorar
       console.error('Imagen no válida o corrupta:', imgSrc.substring(0, 50));
       setIsRendering(false);
       advanceBatchIndex();
@@ -300,6 +302,7 @@ export default function App() {
       drawWatermark(imgSrc, logoImageRef.current, updatedLocation, myDrawId);
     };
     reader.onerror = () => {
+      if (myDrawId !== drawIdRef.current) return; // callback obsoleto, ignorar
       console.error('No se pudo leer el archivo:', file.name);
       setIsRendering(false);
       advanceBatchIndex();
