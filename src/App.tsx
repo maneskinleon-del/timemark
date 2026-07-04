@@ -436,7 +436,7 @@ export default function App() {
   return (
     <div className="flex h-screen overflow-hidden relative">
       {/* Sidebar - Desktop */}
-      <aside className="hidden lg:flex flex-col w-72 bg-surface-container border-r border-outline-variant/30 z-50 shrinks-0">
+      <aside className="hidden lg:flex flex-col w-72 bg-surface-container border-r border-outline-variant/30 z-50 shrink-0">
         <div className="p-6 flex flex-col h-full">
           <div className="mb-10">
             <h1 className="text-3xl font-bold text-secondary tracking-tight">TimeMark</h1>
