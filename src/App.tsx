@@ -206,7 +206,7 @@ export default function App() {
 
         ctx2.shadowColor = 'rgba(0,0,0,0.5)';
         ctx2.shadowBlur = 12 * s;
-        ctx2.fillStyle = 'rgba(15, 23, 42, 0.85)';
+        ctx2.fillStyle = '#111827';
         ctx2.beginPath();
         ctx2.roundRect(panelX, panelY, panelWidth, panelHeight, [0, 16 * s, 16 * s, 0]);
         ctx2.fill();
@@ -514,7 +514,7 @@ export default function App() {
                       title="Current Location"
                       width="100%" height="100%" frameBorder="0" scrolling="no" marginHeight={0} marginWidth={0}
                       src={`https://maps.google.com/maps?q=${mapCoords.lat},${mapCoords.lng}&z=15&output=embed`}
-                      style={{ border: 0, filter: 'contrast(1.2) brightness(0.8) sepia(0.3) hue-rotate(180deg) invert(0.1)' }}
+                      style={{ border: 0, filter: 'grayscale(0.3) brightness(0.9)' }}
                     />
                     <div className="absolute inset-0 pointer-events-none border border-outline-variant/30 rounded-lg shadow-inner" />
                   </div>
@@ -707,7 +707,7 @@ export default function App() {
                 title="Operational Map"
                 width="100%" height="100%" frameBorder="0" scrolling="no" marginHeight={0} marginWidth={0}
                 src={`https://maps.google.com/maps?q=${mapCoords.lat},${mapCoords.lng}&z=15&output=embed`}
-                style={{ border: 0, filter: 'contrast(1.1) brightness(0.9) sepia(0.2) hue-rotate(180deg) invert(0.1)', position: 'absolute', inset: 0 }}
+                style={{ border: 0, filter: 'grayscale(0.3) brightness(0.9)', position: 'absolute', inset: 0 }}
               />
               <div className="absolute top-4 left-4 bg-surface-container/90 backdrop-blur-md p-4 rounded-lg border border-outline-variant/30 shadow-xl max-w-xs">
                 <p className="text-[10px] uppercase font-bold tracking-widest text-secondary mb-1">Última Posición</p>
