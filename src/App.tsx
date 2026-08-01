@@ -126,11 +126,12 @@ export default function App() {
     }
   }, []);
 
-  // Redibujar SOLO cuando cambia logo o ubicación manualmente — sin newDrawId (reusa el actual)
+  // Redibujar SOLO cuando cambia logo o ubicación manualmente — con drawId NUEVO (cancela el dibujo en curso).
+  // Si hay un batch procesándose, no interferir: el siguiente archivo de la cola ya usa la ubicación/logo actualizados.
   useEffect(() => {
-    if (originalImage) {
+    if (originalImage && !batchState.isProcessing) {
       setIsRendering(true);
-      drawWatermark(originalImage, logoImageRef.current, locationRef.current, drawIdRef.current);
+      drawWatermark(originalImage, logoImageRef.current, locationRef.current, ++drawIdRef.current);
     }
   }, [logoImage, location.coords, location.address]);
 
@@ -226,7 +227,7 @@ export default function App() {
 
         ctx2.fillStyle = '#c6c6cd';
         ctx2.font = `${20 * s}px "JetBrains Mono", monospace`;
-        ctx2.fillText(`TIMESTAMP: ${loc.timestamp}`, panelX + 30 * s, panelY + 145 * s);
+        ctx2.fillText(`TIMESTAMP: ${loc.timestamp.slice(0, 16)}`, panelX + 30 * s, panelY + 145 * s);
 
         if (logoImg) {
           const logoSize = 130 * s;
