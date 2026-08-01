@@ -367,7 +367,7 @@ export default function App() {
     setLogs(prev => [{
       id: Date.now(),
       img: previewImage,
-      time: location.timestamp,
+      time: location.timestamp.slice(0, 16),
       address: `${location.address}, ${location.city}`
     }, ...prev]);
 
