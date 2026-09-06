@@ -22,7 +22,12 @@ import {
   formatNowTimestamp,
   geolocationErrorMessage,
   getCurrentPosition,
-  isGeolocationSupported
+  isGeolocationSupported,
+  parseCoordsString,
+  validateCoords,
+  loadLocation,
+  saveLocation,
+  type LocationData
 } from './locationUtils';
 
 // Tipos para la cola de procesamiento
@@ -41,23 +46,31 @@ export default function App() {
   const [originalImage, setOriginalImage] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [logoImage, setLogoImage] = useState<string | null>(null);
-  // Sin ubicación predeterminada: estado neutro hasta que el GPS (o el usuario)
-  // entregue coordenadas reales. Ya no existe fallback silencioso a Peñaflor.
+  // Ubicación: se inicializa desde localStorage si existe (sobrevive refresh/reapertura).
   const [mapCoords, setMapCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [logs, setLogs] = useState<Array<{id: number, img: string, time: string, address: string}>>([]);
   const [unitName, setUnitName] = useState('Unidad 402');
-  const [location, setLocation] = useState<{
-    coords: string;
-    address: string;
-    city: string;
-    timestamp: string;
-    source: 'gps' | 'manual' | 'unknown';
-  }>({
-    coords: "",
-    address: "",
-    city: "",
-    timestamp: "",
-    source: 'unknown'
+
+  // Fuente activa: qué ubicación está usando la app (persiste en localStorage).
+  const [activeSource, setActiveSource] = useState<'gps' | 'manual'>(() => {
+    const saved = loadLocation();
+    return saved?.activeSource ?? 'gps';
+  });
+
+  const [location, setLocation] = useState<LocationData>(() => {
+    const saved = loadLocation();
+    if (saved) {
+      return saved.activeSource === 'manual' ? saved.manual : saved.gps;
+    }
+    return {
+      coords: "",
+      address: "",
+      city: "",
+      timestamp: "",
+      source: 'unknown',
+      mapCoords: null,
+      accuracy: null
+    };
   });
 
   // Estado del proceso GPS: idle | locating | success | error + precisión + error legible
@@ -66,6 +79,9 @@ export default function App() {
   const [locationError, setLocationError] = useState<string | null>(null);
   // Ref para impedir solicitudes GPS simultáneas (los estados de React son asíncronos)
   const isLocatingRef = useRef(false);
+  // Ref de la fuente activa para callbacks asíncronos
+  const activeSourceRef = useRef(activeSource);
+  useEffect(() => { activeSourceRef.current = activeSource; }, [activeSource]);
 
   // Refs para leer siempre el valor actualizado dentro de callbacks asíncronos
   const locationRef = useRef(location);
@@ -90,7 +106,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isTimeModalOpen, setIsTimeModalOpen] = useState(false);
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
-  const [editLocationDetails, setEditLocationDetails] = useState({ coords: '', address: '', city: '' });
+  const [editLocationDetails, setEditLocationDetails] = useState({ coords: '', coordsDec: '', address: '', city: '' });
   const [editDate, setEditDate] = useState('');
   const [editTime, setEditTime] = useState('');
 
@@ -133,15 +149,32 @@ export default function App() {
       const lng = position.coords.longitude;
       const accuracy = position.coords.accuracy;
 
-      setMapCoords({ lat, lng });
-      setLocationAccuracy(accuracy);
-      setLocation(prev => ({
-        ...prev, // conserva address/city manuales si existen (requisito: no sobrescribir datos manuales)
+      const gpsData: LocationData = {
+        ...locationRef.current,
         coords: formatDMS(lat, lng),
         timestamp: formatNowTimestamp(),
-        source: 'gps'
-      }));
+        source: 'gps',
+        mapCoords: { lat, lng },
+        accuracy
+      };
+
+      setMapCoords({ lat, lng });
+      setLocationAccuracy(accuracy);
+
+      if (activeSourceRef.current === 'gps') {
+        // GPS es la fuente activa: sobrescribir ubicación.
+        setLocation(gpsData);
+      }
+      // Si la fuente activa es manual, NO se toca location: los datos GPS se
+      // persisten por separado (stored.gps) para cuando se cambie de fuente.
+
       setLocationStatus('success');
+
+      // Persistir GPS para poder restaurarlo si el usuario cambia de fuente.
+      const stored = loadLocation() ?? { version: 1 as const, activeSource: 'gps' as const, manual: gpsData, gps: gpsData };
+      stored.gps = gpsData;
+      if (activeSourceRef.current === 'gps') stored.activeSource = 'gps';
+      saveLocation(stored);
     } catch (err) {
       console.error('TimeMark - error de geolocalización:', err);
       setLocationError(
@@ -157,12 +190,25 @@ export default function App() {
     }
   }, []);
 
-  // Adquisición automática al montar (usa la misma ruta única)
+  // Adquisición automática al montar: GPS solo si la fuente activa es GPS.
   useEffect(() => {
     const savedLogo = localStorage.getItem('timemark_logo');
     if (savedLogo) setLogoImage(savedLogo);
 
-    getCurrentLocation();
+    // Restaurar mapCoords y accuracy desde ubicación guardada
+    const saved = loadLocation();
+    if (saved) {
+      const locData = saved.activeSource === 'manual' ? saved.manual : saved.gps;
+      if (locData.mapCoords) setMapCoords(locData.mapCoords);
+      if (locData.accuracy != null) setLocationAccuracy(locData.accuracy);
+    }
+
+    if (activeSourceRef.current === 'gps') {
+      getCurrentLocation();
+    } else {
+      // Fuente manual activa: mostrar datos guardados sin intentar GPS.
+      setLocationStatus('idle');
+    }
   }, [getCurrentLocation]);
 
   // Redibujar SOLO cuando cambia logo o ubicación manualmente — con drawId NUEVO (cancela el dibujo en curso).
@@ -181,6 +227,47 @@ export default function App() {
       setPreviewImage(null);
     }
   }, [batchState.isProcessing, batchState.queue.length]);
+
+  // ---- Cambio de fuente activa (GPS ↔ manual) ----
+
+  const switchToGPS = useCallback(() => {
+    setActiveSource('gps');
+    // Sincronizar el ref INMEDIATAMENTE: getCurrentLocation() lee esta ref en
+    // su callback asíncrono, y el efecto que la actualiza corre recién tras el commit.
+    activeSourceRef.current = 'gps';
+    const stored = loadLocation();
+    if (stored) {
+      stored.activeSource = 'gps';
+      saveLocation(stored);
+      // Solo restaurar una fijación GPS genuina: una ubicación manual jamás se
+      // presenta como GPS (la primera entrada manual no debe quedar en el slot gps).
+      if (stored.gps && stored.gps.source === 'gps') {
+        setLocation(stored.gps);
+        if (stored.gps.mapCoords) setMapCoords(stored.gps.mapCoords);
+        if (stored.gps.accuracy != null) setLocationAccuracy(stored.gps.accuracy);
+      }
+    }
+    setLocationStatus('idle');
+    getCurrentLocation();
+  }, [getCurrentLocation]);
+
+  const switchToManual = useCallback(() => {
+    setActiveSource('manual');
+    // Sincronizar el ref de inmediato (ver switchToGPS).
+    activeSourceRef.current = 'manual';
+    const stored = loadLocation();
+    if (stored) {
+      stored.activeSource = 'manual';
+      saveLocation(stored);
+      setLocation(stored.manual);
+      if (stored.manual.mapCoords) setMapCoords(stored.manual.mapCoords);
+      else setMapCoords(null);
+      if (stored.manual.accuracy != null) setLocationAccuracy(stored.manual.accuracy);
+      else setLocationAccuracy(null);
+    }
+    setLocationStatus('idle');
+    setLocationError(null);
+  }, []);
 
   const buildTimestamp = (): string => {
     const ts = customTimestampRef.current;
@@ -464,20 +551,82 @@ export default function App() {
   };
 
   const openLocationModal = () => {
-    setEditLocationDetails({ coords: location.coords, address: location.address, city: location.city });
+    const mc = location.mapCoords;
+    setEditLocationDetails({
+      coords: location.coords,
+      coordsDec: mc ? `${mc.lat.toFixed(6)}, ${mc.lng.toFixed(6)}` : '',
+      address: location.address,
+      city: location.city
+    });
     setIsLocationModalOpen(true);
   };
 
   const applyCustomLocation = () => {
-    setLocation(prev => ({
-      ...prev,
-      coords: editLocationDetails.coords,
-      address: editLocationDetails.address,
-      city: editLocationDetails.city,
-      source: 'manual' // la ubicación editada es manual, NO GPS
-    }));
-    // El botón GPS vuelve a estado neutro: la última adquisición ya no es la fuente.
+    const d = editLocationDetails;
+
+    // Validar coordenadas: priorizar DMS, si está vacío intentar decimal.
+    let newMapCoords: { lat: number; lng: number } | null = null;
+    let newCoordsStr = d.coords;
+
+    if (d.coords.trim()) {
+      newMapCoords = parseCoordsString(d.coords);
+    } else if (d.coordsDec.trim()) {
+      const parts = d.coordsDec.split(',').map(s => s.trim());
+      if (parts.length === 2) {
+        newMapCoords = validateCoords(parts[0], parts[1]);
+        if (newMapCoords) {
+          newCoordsStr = formatDMS(newMapCoords.lat, newMapCoords.lng);
+        }
+      }
+    }
+
+    if (d.coords.trim() && !newMapCoords) {
+      alert('Coordenadas inválidas. Formato: dd°mm\'ss"N dd°mm\'ss"W o decimal (ej: -33.606, -70.879)');
+      return;
+    }
+
+    if (!newCoordsStr.trim() && !d.address.trim()) {
+      alert('Introduce al menos coordenadas o dirección.');
+      return;
+    }
+
+    const newLocation: LocationData = {
+      ...locationRef.current,
+      coords: newCoordsStr,
+      address: d.address,
+      city: d.city,
+      source: 'manual',
+      mapCoords: newMapCoords,
+      accuracy: null
+    };
+
+    // Actualizar mapCoords del mapa si hay coordenadas
+    if (newMapCoords) {
+      setMapCoords(newMapCoords);
+    } else if (!newCoordsStr.trim()) {
+      setMapCoords(null);
+    }
+
+    setLocation(newLocation);
+    setActiveSource('manual');
+    // Sincronizar el ref INMEDIATAMENTE: una fijación GPS en vuelo no debe
+    // sobrescribir la ubicación manual recién aplicada.
+    activeSourceRef.current = 'manual';
     setLocationStatus(prev => (prev === 'locating' ? prev : 'idle'));
+    setLocationError(null);
+
+    // Persistir en localStorage. Si aún no existía nada guardado, el slot gps se
+    // crea VACÍO (source 'unknown'): la ubicación manual no se aliased como GPS.
+    const stored = loadLocation() ?? {
+      version: 1 as const,
+      activeSource: 'manual' as const,
+      manual: newLocation,
+      gps: { coords: "", address: "", city: "", timestamp: "", source: 'unknown' as const, mapCoords: null, accuracy: null }
+    };
+    stored.activeSource = 'manual';
+    stored.manual = newLocation;
+    saveLocation(stored);
+
     setIsLocationModalOpen(false);
   };
 
@@ -555,13 +704,12 @@ export default function App() {
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-[11px] font-bold tracking-[0.1em] text-secondary uppercase">Ubicación Actual</h3>
                     <div className="flex items-center gap-2">
-                      {location.source === 'gps' && (
+                      {activeSource === 'gps' ? (
                         <span className="text-[10px] px-2 py-0.5 rounded bg-secondary/10 text-secondary border border-secondary/20 font-bold uppercase tracking-widest">GPS</span>
-                      )}
-                      {location.source === 'manual' && (
+                      ) : (
                         <span className="text-[10px] px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 font-bold uppercase tracking-widest">Manual</span>
                       )}
-                      <button onClick={openLocationModal} className="text-secondary hover:text-white transition-colors">
+                      <button onClick={openLocationModal} className="text-secondary hover:text-white transition-colors" title="Editar ubicación">
                         <Edit2 size={18} />
                       </button>
                     </div>
@@ -570,7 +718,7 @@ export default function App() {
                   {/* Estado de ubicación */}
                   {locationStatus === 'locating' && (
                     <p className="text-on-surface-variant text-sm flex items-center gap-2">
-                      <Loader2 size={14} className="animate-spin text-secondary" /> Obteniendo ubicación...
+                      <Loader2 size={14} className="animate-spin text-secondary" /> Obteniendo ubicación GPS...
                     </p>
                   )}
 
@@ -578,16 +726,16 @@ export default function App() {
                     <div className="space-y-1">
                       {locationStatus === 'error' && locationError && (
                         <div className="space-y-0.5 mb-1">
-                          <p className="text-[11px] font-bold text-error flex items-center gap-1.5">⚠ No se pudo actualizar la ubicación</p>
+                          <p className="text-[11px] font-bold text-error flex items-center gap-1.5">⚠ No se pudo actualizar la ubicación GPS</p>
                           <p className="text-on-surface-variant text-xs">{locationError}</p>
                         </div>
                       )}
-                      <p className={`text-[11px] font-bold flex items-center gap-1.5 ${location.source === 'gps' && locationStatus === 'success' ? 'text-emerald-400' : 'text-primary'}`}>
-                        <span className={`w-2 h-2 rounded-full inline-block ${location.source === 'gps' && locationStatus === 'success' ? 'bg-emerald-400' : 'bg-primary'}`} />
-                        {location.source === 'gps' && locationStatus === 'success' ? 'GPS disponible' : location.source === 'manual' ? 'Ubicación manual' : 'Última fijación GPS'}
+                      <p className={`text-[11px] font-bold flex items-center gap-1.5 ${activeSource === 'gps' && locationStatus === 'success' ? 'text-emerald-400' : 'text-primary'}`}>
+                        <span className={`w-2 h-2 rounded-full inline-block ${activeSource === 'gps' && locationStatus === 'success' ? 'bg-emerald-400' : 'bg-primary'}`} />
+                        {activeSource === 'gps' && locationStatus === 'success' ? 'GPS disponible' : activeSource === 'manual' ? 'Ubicación manual guardada' : 'Última fijación GPS'}
                       </p>
                       <p className="text-on-surface font-bold text-lg truncate">{location.address || 'DIRECCIÓN NO REGISTRADA'}</p>
-                      <p className="text-on-surface-variant text-sm truncate">{location.city ? `${location.city}, RM` : 'Comuna no registrada'}</p>
+                      <p className="text-on-surface-variant text-sm truncate">{location.city ? `${location.city}` : 'Ciudad / sector no registrado'}</p>
                       {!location.address && !location.city && (
                         <p className="text-on-surface-variant text-xs">Dirección no obtenida automáticamente (el GPS solo entrega coordenadas).</p>
                       )}
@@ -596,41 +744,66 @@ export default function App() {
                         {mapCoords ? `${mapCoords.lat.toFixed(6)}, ${mapCoords.lng.toFixed(6)}` : '—'}
                       </p>
                       <p className="text-on-surface-variant text-xs">
-                        Precisión: {locationAccuracy != null ? `${locationAccuracy} m` : 'no disponible'}
-                        {location.timestamp ? ` · Actualizado: ${location.timestamp.slice(11, 19)}` : ''}
+                        {activeSource === 'gps' && locationAccuracy != null ? `Precisión: ${locationAccuracy} m` : ''}
+                        {location.timestamp ? ` · ${location.timestamp.slice(11, 19)}` : ''}
                       </p>
                     </div>
                   ) : locationStatus === 'error' ? (
-                    <div className="space-y-1">
-                      <p className="text-[11px] font-bold text-error flex items-center gap-1.5">⚠ Ubicación no disponible</p>
+                    <div className="space-y-3">
+                      <p className="text-[11px] font-bold text-error flex items-center gap-1.5">⚠ Ubicación GPS no disponible</p>
                       <p className="text-on-surface-variant text-xs">{locationError}</p>
+                      <button
+                        onClick={openLocationModal}
+                        className="w-full px-4 py-2.5 rounded-lg font-bold text-sm bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 transition-all active:scale-95"
+                      >
+                        Ingresar ubicación manual
+                      </button>
                     </div>
                   ) : (
-                    <p className="text-on-surface-variant text-sm">Ubicación no disponible</p>
+                    <div className="space-y-2">
+                      <p className="text-on-surface-variant text-sm">Ubicación no disponible</p>
+                      <button
+                        onClick={openLocationModal}
+                        className="w-full px-4 py-2.5 rounded-lg font-bold text-sm bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 transition-all active:scale-95"
+                      >
+                        Ingresar ubicación manual
+                      </button>
+                    </div>
                   )}
 
-                  {/* Botón Obtener GPS */}
-                  <button
-                    onClick={getCurrentLocation}
-                    disabled={locationStatus === 'locating'}
-                    className={`mt-3 w-full px-4 py-2.5 rounded-lg font-bold text-sm border transition-all flex items-center justify-center gap-2 ${
-                      locationStatus === 'success'
-                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
-                        : locationStatus === 'error'
-                        ? 'bg-error/10 text-error border-error/30 hover:bg-error/20'
-                        : 'bg-secondary text-on-secondary border-secondary hover:brightness-110'
-                    } ${locationStatus === 'locating' ? 'opacity-60 cursor-wait' : 'active:scale-95'}`}
-                  >
-                    {locationStatus === 'locating' ? (
-                      <><Loader2 size={16} className="animate-spin" /> Obteniendo ubicación...</>
-                    ) : locationStatus === 'success' ? (
-                      <>✓ Ubicación actualizada</>
-                    ) : locationStatus === 'error' ? (
-                      <>⚠ No se pudo obtener la ubicación</>
+                  {/* Botón Obtener GPS / Cambiar fuente */}
+                  <div className="mt-3 flex gap-2">
+                    {activeSource === 'gps' ? (
+                      <button
+                        onClick={getCurrentLocation}
+                        disabled={locationStatus === 'locating'}
+                        className={`flex-1 px-4 py-2.5 rounded-lg font-bold text-sm border transition-all flex items-center justify-center gap-2 ${
+                          locationStatus === 'success'
+                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                            : locationStatus === 'error'
+                            ? 'bg-error/10 text-error border-error/30 hover:bg-error/20'
+                            : 'bg-secondary text-on-secondary border-secondary hover:brightness-110'
+                        } ${locationStatus === 'locating' ? 'opacity-60 cursor-wait' : 'active:scale-95'}`}
+                      >
+                        {locationStatus === 'locating' ? (
+                          <><Loader2 size={16} className="animate-spin" /> Obteniendo ubicación...</>
+                        ) : locationStatus === 'success' ? (
+                          <>✓ Ubicación actualizada</>
+                        ) : locationStatus === 'error' ? (
+                          <>⚠ No se pudo obtener la ubicación</>
+                        ) : (
+                          <>📍 Obtener ubicación</>
+                        )}
+                      </button>
                     ) : (
-                      <>📍 Obtener ubicación</>
+                      <button
+                        onClick={switchToGPS}
+                        className="flex-1 px-4 py-2.5 rounded-lg font-bold text-sm border transition-all flex items-center justify-center gap-2 bg-surface-container-highest text-on-surface border-outline-variant/50 hover:bg-surface-variant active:scale-95"
+                      >
+                        📍 Usar GPS
+                      </button>
                     )}
-                  </button>
+                  </div>
 
                   <div className="flex-1 rounded-lg bg-surface-container-highest relative overflow-hidden flex items-center justify-center min-h-[120px] mt-4">
                     {mapCoords ? (
@@ -841,9 +1014,9 @@ export default function App() {
                 <div className="absolute inset-0 flex items-center justify-center text-on-surface-variant text-sm">Ubicación no disponible</div>
               )}
               <div className="absolute top-4 left-4 bg-surface-container/90 backdrop-blur-md p-4 rounded-lg border border-outline-variant/30 shadow-xl max-w-xs">
-                <p className="text-[10px] uppercase font-bold tracking-widest text-secondary mb-1">Última Posición</p>
+                <p className="text-[10px] uppercase font-bold tracking-widest text-secondary mb-1">{activeSource === 'gps' ? 'Posición GPS' : 'Posición Manual'}</p>
                 <p className="text-on-surface text-sm font-bold truncate">{location.address || 'No disponible'}</p>
-                <p className="text-on-surface-variant text-xs mt-1 font-mono">{location.coords || 'Sin fijación GPS'}</p>
+                <p className="text-on-surface-variant text-xs mt-1 font-mono">{location.coords || 'Sin coordenadas'}</p>
               </div>
             </div>
           </div>
@@ -971,25 +1144,49 @@ export default function App() {
           <div className="bg-surface-container border border-outline-variant/50 rounded-xl w-full max-w-sm p-6 shadow-2xl relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-1 bg-secondary" />
             <h3 className="text-xl font-bold text-on-surface mb-6 flex items-center gap-2">
-              <MapPin size={20} className="text-secondary" /> Editar Ubicación
+              <MapPin size={20} className="text-secondary" /> {location.coords || location.address ? 'Editar Ubicación' : 'Ingresar Ubicación Manual'}
             </h3>
             <div className="space-y-4">
-              {[
-                { key: 'coords', label: 'Coordenadas', placeholder: 'dd°mm\'ss"S dd°mm\'ss"W', mono: true },
-                { key: 'address', label: 'Dirección', placeholder: 'Dirección o punto de referencia', mono: false },
-                { key: 'city', label: 'Ciudad / Sector', placeholder: 'Ciudad o sector', mono: false },
-              ].map(({ key, label, placeholder, mono }) => (
-                <div key={key}>
-                  <label className="block text-[11px] font-bold tracking-widest text-on-surface-variant uppercase mb-2">{label}</label>
-                  <input
-                    type="text"
-                    value={editLocationDetails[key as keyof typeof editLocationDetails]}
-                    onChange={e => setEditLocationDetails({ ...editLocationDetails, [key]: e.target.value })}
-                    placeholder={placeholder}
-                    className={`w-full bg-surface-container-high border border-outline-variant/40 rounded-lg p-3 text-on-surface focus:border-secondary transition-colors outline-none text-sm ${mono ? 'font-mono' : ''}`}
-                  />
-                </div>
-              ))}
+              <div>
+                <label className="block text-[11px] font-bold tracking-widest text-on-surface-variant uppercase mb-2">Coordenadas DMS</label>
+                <input
+                  type="text"
+                  value={editLocationDetails.coords}
+                  onChange={e => setEditLocationDetails({ ...editLocationDetails, coords: e.target.value })}
+                  placeholder="33°36'21.6&quot;S 70°52'44.4&quot;W"
+                  className="w-full bg-surface-container-high border border-outline-variant/40 rounded-lg p-3 text-on-surface focus:border-secondary transition-colors outline-none text-sm font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold tracking-widest text-on-surface-variant uppercase mb-2">Coordenadas Decimales</label>
+                <input
+                  type="text"
+                  value={editLocationDetails.coordsDec}
+                  onChange={e => setEditLocationDetails({ ...editLocationDetails, coordsDec: e.target.value })}
+                  placeholder="-33.606, -70.879"
+                  className="w-full bg-surface-container-high border border-outline-variant/40 rounded-lg p-3 text-on-surface focus:border-secondary transition-colors outline-none text-sm font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold tracking-widest text-on-surface-variant uppercase mb-2">Ubicación / Puesto</label>
+                <input
+                  type="text"
+                  value={editLocationDetails.address}
+                  onChange={e => setEditLocationDetails({ ...editLocationDetails, address: e.target.value })}
+                  placeholder="Puesto PV14, Peñaflor"
+                  className="w-full bg-surface-container-high border border-outline-variant/40 rounded-lg p-3 text-on-surface focus:border-secondary transition-colors outline-none text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold tracking-widest text-on-surface-variant uppercase mb-2">Ciudad / Región</label>
+                <input
+                  type="text"
+                  value={editLocationDetails.city}
+                  onChange={e => setEditLocationDetails({ ...editLocationDetails, city: e.target.value })}
+                  placeholder="Peñaflor, RM"
+                  className="w-full bg-surface-container-high border border-outline-variant/40 rounded-lg p-3 text-on-surface focus:border-secondary transition-colors outline-none text-sm"
+                />
+              </div>
             </div>
             <div className="mt-8 flex gap-3">
               <button onClick={applyCustomLocation}

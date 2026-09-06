@@ -101,3 +101,93 @@ export function geolocationErrorMessage(err: unknown): string {
 export async function reverseGeocode(_lat: number, _lng: number): Promise<{ address: string; city: string } | null> {
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Persistencia y validación de ubicación manual
+// ---------------------------------------------------------------------------
+
+export interface LocationData {
+  coords: string;
+  address: string;
+  city: string;
+  timestamp: string;
+  source: 'gps' | 'manual' | 'unknown';
+  mapCoords: { lat: number; lng: number } | null;
+  accuracy: number | null;
+}
+
+interface StoredLocation {
+  version: 1;
+  activeSource: 'gps' | 'manual';
+  manual: LocationData;
+  gps: LocationData;
+}
+
+const STORAGE_KEY = 'timemark_location';
+
+/**
+ * Intenta convertir una cadena DMS (dd°mm'ss.s"N) a coordenadas decimales.
+ * Devuelve null si el formato no es reconocido.
+ */
+export function parseDMS(dms: string): number | null {
+  const cleaned = dms.trim().replace(/\s+/g, '');
+  const match = cleaned.match(/^(\d+(?:\.\d+)?)°(\d+(?:\.\d+)?)['′](\d+(?:\.\d+)?)["″]([NSEW])$/i);
+  if (!match) return null;
+  const degrees = parseFloat(match[1]);
+  const minutes = parseFloat(match[2]);
+  const seconds = parseFloat(match[3]);
+  const direction = match[4].toUpperCase();
+  let decimal = degrees + minutes / 60 + seconds / 3600;
+  if (direction === 'S' || direction === 'W') decimal = -decimal;
+  return decimal;
+}
+
+/**
+ * Valida coordenadas decimales (lat: -90..90, lng: -180..180).
+ */
+export function validateCoords(latStr: string, lngStr: string): { lat: number; lng: number } | null {
+  const lat = parseFloat(latStr);
+  const lng = parseFloat(lngStr);
+  if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
+}
+
+/**
+ * Extrae coordenadas decimales desde un string DMS de coordenadas.
+ * Acepta formato: dd°mm'ss.s"N dd°mm'ss.s"W
+ */
+export function parseCoordsString(coordsStr: string): { lat: number; lng: number } | null {
+  const cleaned = coordsStr.trim();
+  const parts = cleaned.split(/\s+/);
+  if (parts.length < 2) return null;
+  const latRaw = parts.slice(0, -1).join(' ');
+  const lngRaw = parts[parts.length - 1];
+  const lat = parseDMS(latRaw);
+  const lng = parseDMS(lngRaw);
+  if (lat === null || lng === null) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
+}
+
+/** Carga la ubicación persistida. Devuelve null si no hay datos o si falla la lectura. */
+export function loadLocation(): StoredLocation | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredLocation;
+    if (parsed?.version !== 1) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/** Persiste ubicación y fuente activa. No lanza excepciones. */
+export function saveLocation(stored: StoredLocation): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+  } catch (e) {
+    console.error('TimeMark - No se pudo guardar ubicación en localStorage:', e);
+  }
+}
