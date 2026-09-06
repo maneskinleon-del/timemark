@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Camera, 
   Image as ImageIcon, 
@@ -14,8 +14,16 @@ import {
   ShieldCheck,
   Target,
   Edit2,
-  X
+  X,
+  Loader2
 } from 'lucide-react';
+import {
+  formatDMS,
+  formatNowTimestamp,
+  geolocationErrorMessage,
+  getCurrentPosition,
+  isGeolocationSupported
+} from './locationUtils';
 
 // Tipos para la cola de procesamiento
 interface QueueItem {
@@ -33,15 +41,31 @@ export default function App() {
   const [originalImage, setOriginalImage] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [logoImage, setLogoImage] = useState<string | null>(null);
-  const [mapCoords, setMapCoords] = useState({ lat: -33.606, lng: -70.879 });
+  // Sin ubicación predeterminada: estado neutro hasta que el GPS (o el usuario)
+  // entregue coordenadas reales. Ya no existe fallback silencioso a Peñaflor.
+  const [mapCoords, setMapCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [logs, setLogs] = useState<Array<{id: number, img: string, time: string, address: string}>>([]);
   const [unitName, setUnitName] = useState('Unidad 402');
-  const [location, setLocation] = useState({
-    coords: "33°36'21.6\"S 70°52'44.4\"W",
-    address: "AVENIDA BERLÍN 34",
-    city: "PEÑAFLOR",
-    timestamp: ""
+  const [location, setLocation] = useState<{
+    coords: string;
+    address: string;
+    city: string;
+    timestamp: string;
+    source: 'gps' | 'manual' | 'unknown';
+  }>({
+    coords: "",
+    address: "",
+    city: "",
+    timestamp: "",
+    source: 'unknown'
   });
+
+  // Estado del proceso GPS: idle | locating | success | error + precisión + error legible
+  const [locationStatus, setLocationStatus] = useState<'idle' | 'locating' | 'success' | 'error'>('idle');
+  const [locationAccuracy, setLocationAccuracy] = useState<number | null>(null);
+  const [locationError, setLocationError] = useState<string | null>(null);
+  // Ref para impedir solicitudes GPS simultáneas (los estados de React son asíncronos)
+  const isLocatingRef = useRef(false);
 
   // Refs para leer siempre el valor actualizado dentro de callbacks asíncronos
   const locationRef = useRef(location);
@@ -95,36 +119,51 @@ export default function App() {
     year: 'numeric', month: 'long', day: 'numeric'
   }).toUpperCase();
 
-  // Geolocalización al montar
+  // ÚNICA ruta de adquisición GPS de la app. La usan la carga inicial, el botón
+  // "Obtener ubicación" y cualquier acción futura. No duplicar esta lógica en otros lugares.
+  const getCurrentLocation = useCallback(async () => {
+    if (isLocatingRef.current) return; // impedir solicitudes simultáneas
+    isLocatingRef.current = true;
+    setLocationStatus('locating');
+    setLocationError(null);
+
+    try {
+      const position = await getCurrentPosition();
+      const lat = position.coords.latitude;
+      const lng = position.coords.longitude;
+      const accuracy = position.coords.accuracy;
+
+      setMapCoords({ lat, lng });
+      setLocationAccuracy(accuracy);
+      setLocation(prev => ({
+        ...prev, // conserva address/city manuales si existen (requisito: no sobrescribir datos manuales)
+        coords: formatDMS(lat, lng),
+        timestamp: formatNowTimestamp(),
+        source: 'gps'
+      }));
+      setLocationStatus('success');
+    } catch (err) {
+      console.error('TimeMark - error de geolocalización:', err);
+      setLocationError(
+        isGeolocationSupported()
+          ? geolocationErrorMessage(err)
+          : 'La geolocalización no está disponible en este navegador o dispositivo.'
+      );
+      // NO se toca mapCoords/location previos: si existía una fijación legítima
+      // anterior (GPS o manual), se conserva y la UI la sigue mostrando.
+      setLocationStatus('error');
+    } finally {
+      isLocatingRef.current = false;
+    }
+  }, []);
+
+  // Adquisición automática al montar (usa la misma ruta única)
   useEffect(() => {
     const savedLogo = localStorage.getItem('timemark_logo');
     if (savedLogo) setLogoImage(savedLogo);
 
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const lat = position.coords.latitude;
-          const lng = position.coords.longitude;
-          const latDir = lat >= 0 ? 'N' : 'S';
-          const lngDir = lng >= 0 ? 'E' : 'W';
-          const formatCoord = (val: number) => {
-            const abs = Math.abs(val);
-            const d = Math.floor(abs);
-            const m = Math.floor((abs - d) * 60);
-            const s = ((abs - d - m / 60) * 3600).toFixed(1);
-            return `${d}°${m}'${s}"`;
-          };
-          setMapCoords({ lat, lng });
-          setLocation(prev => ({
-            ...prev,
-            coords: `${formatCoord(lat)}${latDir} ${formatCoord(lng)}${lngDir}`
-          }));
-        },
-        (error) => console.log("Geolocation error:", error),
-        { enableHighAccuracy: true }
-      );
-    }
-  }, []);
+    getCurrentLocation();
+  }, [getCurrentLocation]);
 
   // Redibujar SOLO cuando cambia logo o ubicación manualmente — con drawId NUEVO (cancela el dibujo en curso).
   // Si hay un batch procesándose, no interferir: el siguiente archivo de la cola ya usa la ubicación/logo actualizados.
@@ -219,11 +258,12 @@ export default function App() {
         ctx2.textBaseline = 'alphabetic';
         ctx2.fillStyle = '#ffb95f';
         ctx2.font = `${24 * s}px sans-serif`;
-        ctx2.fillText(`📍 ${loc.coords}`, panelX + 30 * s, panelY + 50 * s);
+        ctx2.fillText(`📍 ${loc.coords || 'UBICACIÓN NO DISPONIBLE'}`, panelX + 30 * s, panelY + 50 * s);
 
         ctx2.fillStyle = 'white';
         ctx2.font = `bold ${32 * s}px "JetBrains Mono", monospace`;
-        ctx2.fillText(`${loc.address}, ${loc.city}`, panelX + 30 * s, panelY + 100 * s);
+        const placeLine = [loc.address, loc.city].filter(Boolean).join(', ') || 'DIRECCIÓN NO REGISTRADA';
+        ctx2.fillText(placeLine, panelX + 30 * s, panelY + 100 * s);
 
         ctx2.fillStyle = '#c6c6cd';
         ctx2.font = `${20 * s}px "JetBrains Mono", monospace`;
@@ -346,6 +386,13 @@ export default function App() {
   const handleSave = () => {
     if (!previewImage || isRendering) return;
 
+    // No guardar silenciosamente una foto sin ubicación: o hay coordenadas GPS
+    // o hay una ubicación manual explícita (source === 'manual').
+    if (!location.coords && !location.address) {
+      alert('Ubicación no disponible. Obtén la ubicación GPS o introduce una ubicación manual.');
+      return;
+    }
+
     if (settingsRef.current.saveOriginal && originalImage) {
       const linkOriginal = document.createElement('a');
       linkOriginal.download = `original_${Date.now()}.jpg`;
@@ -426,8 +473,11 @@ export default function App() {
       ...prev,
       coords: editLocationDetails.coords,
       address: editLocationDetails.address,
-      city: editLocationDetails.city
+      city: editLocationDetails.city,
+      source: 'manual' // la ubicación editada es manual, NO GPS
     }));
+    // El botón GPS vuelve a estado neutro: la última adquisición ya no es la fuente.
+    setLocationStatus(prev => (prev === 'locating' ? prev : 'idle'));
     setIsLocationModalOpen(false);
   };
 
@@ -501,22 +551,98 @@ export default function App() {
               {/* Left Column */}
               <div className="col-span-1 lg:col-span-4 space-y-6 flex flex-col">
                 {/* Location Card */}
-                <section className="glass-card p-6 rounded-xl flex-1 max-h-64 flex flex-col">
+                <section className="glass-card p-6 rounded-xl flex flex-col">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-[11px] font-bold tracking-[0.1em] text-secondary uppercase">Ubicación Actual</h3>
-                    <button onClick={openLocationModal} className="text-secondary hover:text-white transition-colors">
-                      <Edit2 size={18} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {location.source === 'gps' && (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-secondary/10 text-secondary border border-secondary/20 font-bold uppercase tracking-widest">GPS</span>
+                      )}
+                      {location.source === 'manual' && (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 font-bold uppercase tracking-widest">Manual</span>
+                      )}
+                      <button onClick={openLocationModal} className="text-secondary hover:text-white transition-colors">
+                        <Edit2 size={18} />
+                      </button>
+                    </div>
                   </div>
-                  <p className="text-on-surface font-bold text-lg mb-1">{location.address}</p>
-                  <p className="text-on-surface-variant text-sm mb-4">{location.city}, RM</p>
-                  <div className="flex-1 rounded-lg bg-surface-container-highest relative overflow-hidden flex items-center justify-center min-h-[140px] mt-4">
-                    <iframe
-                      title="Current Location"
-                      width="100%" height="100%" frameBorder="0" scrolling="no" marginHeight={0} marginWidth={0}
-                      src={`https://maps.google.com/maps?q=${mapCoords.lat},${mapCoords.lng}&z=15&output=embed`}
-                      style={{ border: 0, filter: 'grayscale(0.3) brightness(0.9)' }}
-                    />
+
+                  {/* Estado de ubicación */}
+                  {locationStatus === 'locating' && (
+                    <p className="text-on-surface-variant text-sm flex items-center gap-2">
+                      <Loader2 size={14} className="animate-spin text-secondary" /> Obteniendo ubicación...
+                    </p>
+                  )}
+
+                  {(location.coords || location.address) ? (
+                    <div className="space-y-1">
+                      {locationStatus === 'error' && locationError && (
+                        <div className="space-y-0.5 mb-1">
+                          <p className="text-[11px] font-bold text-error flex items-center gap-1.5">⚠ No se pudo actualizar la ubicación</p>
+                          <p className="text-on-surface-variant text-xs">{locationError}</p>
+                        </div>
+                      )}
+                      <p className={`text-[11px] font-bold flex items-center gap-1.5 ${location.source === 'gps' && locationStatus === 'success' ? 'text-emerald-400' : 'text-primary'}`}>
+                        <span className={`w-2 h-2 rounded-full inline-block ${location.source === 'gps' && locationStatus === 'success' ? 'bg-emerald-400' : 'bg-primary'}`} />
+                        {location.source === 'gps' && locationStatus === 'success' ? 'GPS disponible' : location.source === 'manual' ? 'Ubicación manual' : 'Última fijación GPS'}
+                      </p>
+                      <p className="text-on-surface font-bold text-lg truncate">{location.address || 'DIRECCIÓN NO REGISTRADA'}</p>
+                      <p className="text-on-surface-variant text-sm truncate">{location.city ? `${location.city}, RM` : 'Comuna no registrada'}</p>
+                      {!location.address && !location.city && (
+                        <p className="text-on-surface-variant text-xs">Dirección no obtenida automáticamente (el GPS solo entrega coordenadas).</p>
+                      )}
+                      <p className="text-on-surface-variant text-xs font-mono truncate">{location.coords}</p>
+                      <p className="text-on-surface-variant text-xs font-mono truncate">
+                        {mapCoords ? `${mapCoords.lat.toFixed(6)}, ${mapCoords.lng.toFixed(6)}` : '—'}
+                      </p>
+                      <p className="text-on-surface-variant text-xs">
+                        Precisión: {locationAccuracy != null ? `${locationAccuracy} m` : 'no disponible'}
+                        {location.timestamp ? ` · Actualizado: ${location.timestamp.slice(11, 19)}` : ''}
+                      </p>
+                    </div>
+                  ) : locationStatus === 'error' ? (
+                    <div className="space-y-1">
+                      <p className="text-[11px] font-bold text-error flex items-center gap-1.5">⚠ Ubicación no disponible</p>
+                      <p className="text-on-surface-variant text-xs">{locationError}</p>
+                    </div>
+                  ) : (
+                    <p className="text-on-surface-variant text-sm">Ubicación no disponible</p>
+                  )}
+
+                  {/* Botón Obtener GPS */}
+                  <button
+                    onClick={getCurrentLocation}
+                    disabled={locationStatus === 'locating'}
+                    className={`mt-3 w-full px-4 py-2.5 rounded-lg font-bold text-sm border transition-all flex items-center justify-center gap-2 ${
+                      locationStatus === 'success'
+                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                        : locationStatus === 'error'
+                        ? 'bg-error/10 text-error border-error/30 hover:bg-error/20'
+                        : 'bg-secondary text-on-secondary border-secondary hover:brightness-110'
+                    } ${locationStatus === 'locating' ? 'opacity-60 cursor-wait' : 'active:scale-95'}`}
+                  >
+                    {locationStatus === 'locating' ? (
+                      <><Loader2 size={16} className="animate-spin" /> Obteniendo ubicación...</>
+                    ) : locationStatus === 'success' ? (
+                      <>✓ Ubicación actualizada</>
+                    ) : locationStatus === 'error' ? (
+                      <>⚠ No se pudo obtener la ubicación</>
+                    ) : (
+                      <>📍 Obtener ubicación</>
+                    )}
+                  </button>
+
+                  <div className="flex-1 rounded-lg bg-surface-container-highest relative overflow-hidden flex items-center justify-center min-h-[120px] mt-4">
+                    {mapCoords ? (
+                      <iframe
+                        title="Current Location"
+                        width="100%" height="100%" frameBorder="0" scrolling="no" marginHeight={0} marginWidth={0}
+                        src={`https://maps.google.com/maps?q=${mapCoords.lat},${mapCoords.lng}&z=15&output=embed`}
+                        style={{ border: 0, filter: 'grayscale(0.3) brightness(0.9)' }}
+                      />
+                    ) : (
+                      <span className="text-on-surface-variant text-xs">Ubicación no disponible</span>
+                    )}
                     <div className="absolute inset-0 pointer-events-none border border-outline-variant/30 rounded-lg shadow-inner" />
                   </div>
                 </section>
@@ -704,16 +830,20 @@ export default function App() {
               <MapIcon className="text-secondary" /> Vista del Mapa Operativo
             </h2>
             <div className="flex-1 rounded-xl overflow-hidden border border-outline-variant/50 relative shadow-inner bg-surface-container-lowest">
-              <iframe
-                title="Operational Map"
-                width="100%" height="100%" frameBorder="0" scrolling="no" marginHeight={0} marginWidth={0}
-                src={`https://maps.google.com/maps?q=${mapCoords.lat},${mapCoords.lng}&z=15&output=embed`}
-                style={{ border: 0, filter: 'grayscale(0.3) brightness(0.9)', position: 'absolute', inset: 0 }}
-              />
+              {mapCoords ? (
+                <iframe
+                  title="Operational Map"
+                  width="100%" height="100%" frameBorder="0" scrolling="no" marginHeight={0} marginWidth={0}
+                  src={`https://maps.google.com/maps?q=${mapCoords.lat},${mapCoords.lng}&z=15&output=embed`}
+                  style={{ border: 0, filter: 'grayscale(0.3) brightness(0.9)', position: 'absolute', inset: 0 }}
+                />
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center text-on-surface-variant text-sm">Ubicación no disponible</div>
+              )}
               <div className="absolute top-4 left-4 bg-surface-container/90 backdrop-blur-md p-4 rounded-lg border border-outline-variant/30 shadow-xl max-w-xs">
                 <p className="text-[10px] uppercase font-bold tracking-widest text-secondary mb-1">Última Posición</p>
-                <p className="text-on-surface text-sm font-bold truncate">{location.address}</p>
-                <p className="text-on-surface-variant text-xs mt-1 font-mono">{location.coords}</p>
+                <p className="text-on-surface text-sm font-bold truncate">{location.address || 'No disponible'}</p>
+                <p className="text-on-surface-variant text-xs mt-1 font-mono">{location.coords || 'Sin fijación GPS'}</p>
               </div>
             </div>
           </div>
@@ -845,9 +975,9 @@ export default function App() {
             </h3>
             <div className="space-y-4">
               {[
-                { key: 'coords', label: 'Coordenadas', placeholder: "33°36'21.6\"S 70°52'44.4\"W", mono: true },
-                { key: 'address', label: 'Dirección', placeholder: 'AVENIDA BERLÍN 34', mono: false },
-                { key: 'city', label: 'Ciudad / Sector', placeholder: 'San Miguel', mono: false },
+                { key: 'coords', label: 'Coordenadas', placeholder: 'dd°mm\'ss"S dd°mm\'ss"W', mono: true },
+                { key: 'address', label: 'Dirección', placeholder: 'Dirección o punto de referencia', mono: false },
+                { key: 'city', label: 'Ciudad / Sector', placeholder: 'Ciudad o sector', mono: false },
               ].map(({ key, label, placeholder, mono }) => (
                 <div key={key}>
                   <label className="block text-[11px] font-bold tracking-widest text-on-surface-variant uppercase mb-2">{label}</label>
