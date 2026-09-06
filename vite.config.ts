@@ -2,6 +2,26 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import tailwindcss from '@tailwindcss/vite'
+import os from 'node:os'
+
+// Workaround for Termux/Android: on some devices os.cpus() returns an empty
+// array because the kernel exposes no parseable CPU info (verified here:
+// os.cpus().length === 0 while os.availableParallelism() === 7). workbox-build
+// bundles the service worker with @rollup/plugin-terser, which sizes its worker
+// pool as `maxWorkers || os.cpus().length`; a pool sized 0 never spawns a
+// worker, so its renderChunk hook never resolves and the build fails with
+// "Unable to write the service worker file / Unexpected early exit /
+// Unfinished hook action(s) on exit: (terser) renderChunk".
+// Restoring a non-empty cpus() list lets the pool spawn workers again, keeping
+// the service worker minified. No-op on hosts where os.cpus() works normally.
+if (os.cpus().length === 0) {
+  const virtualCpus = Array.from({ length: 1 }, () => ({
+    model: 'virtual',
+    speed: 0,
+    times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 }
+  }))
+  os.cpus = () => virtualCpus
+}
 
 export default defineConfig({
   plugins: [
