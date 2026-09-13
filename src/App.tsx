@@ -45,6 +45,37 @@ interface BatchProcessState {
 // Formatos MIME aceptados para el logo (PNG, JPG, WebP, GIF, SVG)
 const LOGO_ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml'];
 
+// Decide si el logo necesita placa blanca detrás. Un logo claro con fondo
+// transparente (PNG/SVG típico) se ve mejor directo sobre el panel oscuro;
+// la placa solo queda para logos opacos (JPEG) o de tonos oscuros.
+const logoNeedsPlate = (logoImg: HTMLImageElement): boolean => {
+  try {
+    const size = 48; // muestreo pequeño: rápido y suficiente para decidir
+    const c = document.createElement('canvas');
+    c.width = size;
+    c.height = size;
+    const cx = c.getContext('2d', { willReadFrequently: true });
+    if (!cx) return true;
+    cx.drawImage(logoImg, 0, 0, size, size);
+    const data = cx.getImageData(0, 0, size, size).data;
+    let opaque = 0;
+    let light = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] > 32) {
+        opaque++;
+        const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        if (lum > 160) light++;
+      }
+    }
+    if (opaque === 0) return false; // imagen totalmente transparente
+    const transparency = 1 - opaque / (size * size);
+    if (transparency < 0.15) return true; // imagen opaca (JPEG): mantener placa
+    return light / opaque <= 0.6; // glifo mayormente claro → sin placa
+  } catch {
+    return true; // ante cualquier duda, placa (garantiza visibilidad)
+  }
+};
+
 export default function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [originalImage, setOriginalImage] = useState<string | null>(null);
@@ -369,17 +400,23 @@ export default function App() {
           const logoX = panelX + panelWidth - logoSize - 25 * s;
           const logoY = panelY + logoPadding;
 
-          ctx2.fillStyle = 'rgba(255, 255, 255, 1)';
-          ctx2.beginPath();
-          ctx2.roundRect(logoX, logoY, logoSize, logoSize, 8 * s);
-          ctx2.fill();
+          // Placa blanca SOLO si el logo la necesita (opaco u oscuro);
+          // un logo claro con transparencia va directo sobre el panel.
+          const withPlate = logoNeedsPlate(logoImg);
+          if (withPlate) {
+            ctx2.fillStyle = 'rgba(255, 255, 255, 1)';
+            ctx2.beginPath();
+            ctx2.roundRect(logoX, logoY, logoSize, logoSize, 8 * s);
+            ctx2.fill();
+          }
 
-          const targetSize = logoSize - 16 * s;
+          const targetSize = withPlate ? logoSize - 16 * s : logoSize;
+          const plateInset = withPlate ? 8 * s : 0;
           const imgAspect = logoImg.width / logoImg.height;
           let drawWidth = targetSize;
           let drawHeight = targetSize;
-          let drawX = logoX + 8 * s;
-          let drawY = logoY + 8 * s;
+          let drawX = logoX + plateInset;
+          let drawY = logoY + plateInset;
           if (imgAspect > 1) { drawHeight = targetSize / imgAspect; drawY += (targetSize - drawHeight) / 2; }
           else if (imgAspect < 1) { drawWidth = targetSize * imgAspect; drawX += (targetSize - drawWidth) / 2; }
 
@@ -589,16 +626,22 @@ export default function App() {
             const logoPadding = (panelHeight - logoSize) / 2;
             const logoX = panelX + panelWidth - logoSize - 25 * s;
             const logoY = panelY + logoPadding;
-            ctx2.fillStyle = 'rgba(255, 255, 255, 1)';
-            ctx2.beginPath();
-            ctx2.roundRect(logoX, logoY, logoSize, logoSize, 8 * s);
-            ctx2.fill();
-            const targetSize = logoSize - 16 * s;
+
+            const withPlate = logoNeedsPlate(logoImg);
+            if (withPlate) {
+              ctx2.fillStyle = 'rgba(255, 255, 255, 1)';
+              ctx2.beginPath();
+              ctx2.roundRect(logoX, logoY, logoSize, logoSize, 8 * s);
+              ctx2.fill();
+            }
+
+            const targetSize = withPlate ? logoSize - 16 * s : logoSize;
+            const plateInset = withPlate ? 8 * s : 0;
             const imgAspect = logoImg.width / logoImg.height;
             let drawWidth = targetSize;
             let drawHeight = targetSize;
-            let drawX = logoX + 8 * s;
-            let drawY = logoY + 8 * s;
+            let drawX = logoX + plateInset;
+            let drawY = logoY + plateInset;
             if (imgAspect > 1) { drawHeight = targetSize / imgAspect; drawY += (targetSize - drawHeight) / 2; }
             else if (imgAspect < 1) { drawWidth = targetSize * imgAspect; drawX += (targetSize - drawWidth) / 2; }
             ctx2.drawImage(logoImg, drawX, drawY, drawWidth, drawHeight);
