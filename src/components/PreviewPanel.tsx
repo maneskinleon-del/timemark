@@ -1,17 +1,18 @@
 import React from 'react';
-import { Camera, ShieldCheck, Clock, Maximize } from 'lucide-react';
+import { Camera, ShieldCheck, Clock, Maximize, Share2 } from 'lucide-react';
 
 interface PreviewPanelProps {
   previewImage: string | null;
   isRendering: boolean;
   handleSave: () => void;
+  handleShare: () => void;
   handleDiscard: () => void;
   openTimeModal: () => void;
   queueLength: number;
 }
 
 export default function PreviewPanel({
-  previewImage, isRendering, handleSave, handleDiscard, openTimeModal, queueLength
+  previewImage, isRendering, handleSave, handleShare, handleDiscard, openTimeModal, queueLength
 }: PreviewPanelProps) {
   return (
     <section className="glass-card rounded-xl flex flex-col overflow-hidden h-[500px] lg:h-full min-h-[500px]">
@@ -36,28 +37,45 @@ export default function PreviewPanel({
       </div>
 
       {previewImage && (
-        <div className="p-4 md:p-6 bg-surface-container-low/50 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between border-t border-outline-variant/20 shrink-0">
-          <div>
-            <p className="panel-header mb-2">Integridad</p>
-            <div className="flex gap-2">
-              <span className="bg-secondary/10 text-secondary border border-secondary/20 px-2 py-0.5 rounded font-mono text-xs">MD5: VERIFICADO</span>
-              <span className="bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded font-mono text-xs">LISTO</span>
+        <div className="p-4 md:p-6 bg-surface-container-low/50 flex flex-col gap-4 border-t border-outline-variant/20 shrink-0">
+          <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+            <div className="hidden sm:block">
+              <p className="panel-header mb-2">Integridad</p>
+              <div className="flex gap-2">
+                <span className="bg-secondary/10 text-secondary border border-secondary/20 px-2 py-0.5 rounded font-mono text-xs">MD5: VERIFICADO</span>
+                <span className="bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded font-mono text-xs">LISTO</span>
+              </div>
+            </div>
+            <div className="flex flex-wrap w-full sm:w-auto gap-3">
+              <button onClick={openTimeModal} disabled={isRendering}
+                className="flex-1 min-w-[100px] border border-outline-variant/50 hover:bg-surface-container text-on-surface rounded-lg font-bold py-3 transition-colors flex justify-center gap-2">
+                <Clock size={18} /> Hora
+              </button>
+              <button onClick={handleDiscard} disabled={isRendering}
+                className="flex-1 min-w-[100px] bg-surface-container-highest text-on-surface rounded-lg font-bold border border-outline-variant/50 hover:bg-surface-variant transition-colors py-3">
+                {queueLength > 0 ? `Descartar (+${queueLength})` : 'Descartar'}
+              </button>
             </div>
           </div>
-          <div className="flex flex-wrap w-full md:w-auto gap-3">
-            <button onClick={openTimeModal} disabled={isRendering}
-              className="flex-1 min-w-[100px] border border-outline-variant/50 hover:bg-surface-container text-on-surface rounded-lg font-bold py-2.5 transition-colors flex justify-center gap-2">
-              <Clock size={16} /> Hora
-            </button>
-            <button onClick={handleDiscard} disabled={isRendering}
-              className="flex-1 min-w-[100px] bg-surface-container-highest text-on-surface rounded-lg font-bold border border-outline-variant/50 hover:bg-surface-variant transition-colors">
-              {queueLength > 0 ? `Descartar (+${queueLength})` : 'Descartar'}
-            </button>
-            <button onClick={handleSave} disabled={isRendering}
-              className="flex-1 min-w-[150px] bg-secondary text-on-secondary rounded-lg font-bold shadow-[0_0_15px_rgba(240,179,75,0.2)] hover:brightness-110 transition-all">
-              {isRendering ? 'Procesando...' : (queueLength > 0 ? 'Guardar y Siguiente' : 'Guardar')}
-            </button>
-          </div>
+
+          {/* Botón Guardar más grande */}
+          <button
+            onClick={handleSave}
+            disabled={isRendering}
+            className="w-full py-4 text-base md:text-lg bg-secondary text-on-secondary rounded-xl font-bold shadow-[0_0_20px_rgba(240,179,75,0.35)] hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {isRendering ? 'Procesando...' : (queueLength > 0 ? 'Guardar y Siguiente' : 'Guardar')}
+          </button>
+
+          {/* Botón Compartir (WhatsApp / compartir nativo) */}
+          <button
+            onClick={handleShare}
+            disabled={isRendering}
+            className="w-full py-3.5 text-base border-2 border-secondary/60 text-secondary bg-secondary/10 rounded-xl font-bold hover:bg-secondary/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <Share2 size={20} />
+            Compartir
+          </button>
         </div>
       )}
     </section>

@@ -4,10 +4,9 @@ import { LayoutDashboard, FileText, MapIcon, Settings, HelpCircle } from 'lucide
 interface SidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
-  unitName: string;
 }
 
-export default function Sidebar({ activeTab, setActiveTab, unitName }: SidebarProps) {
+export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
   const items = [
     { id: 'dashboard', label: 'Panel de Control', Icon: LayoutDashboard },
     { id: 'logs', label: 'Registros de Patrulla', Icon: FileText },
@@ -20,16 +19,7 @@ export default function Sidebar({ activeTab, setActiveTab, unitName }: SidebarPr
       <div className="p-6 flex flex-col h-full">
         <div className="mb-10">
           <h1 className="text-3xl font-bold text-secondary tracking-tight">TimeMark</h1>
-          <div className="mt-4 flex items-center gap-3 p-3 bg-surface-container-high rounded-lg">
-            <div className="w-10 h-10 rounded-full bg-surface-variant flex items-center justify-center text-on-surface">U4</div>
-            <div>
-              <p className="text-on-surface font-bold text-sm">{unitName}</p>
-              <p className="text-on-surface-variant text-xs flex items-center gap-1">
-                <span className="w-2 h-2 bg-secondary rounded-full animate-status-pulse" />
-                Turno Activo
-              </p>
-            </div>
-          </div>
+          <p className="mt-2 text-on-surface-variant text-sm">Fotos verificadas de ronda</p>
         </div>
 
         <nav className="flex-1 space-y-2">
@@ -51,9 +41,6 @@ export default function Sidebar({ activeTab, setActiveTab, unitName }: SidebarPr
         <div className="pt-6 border-t border-outline-variant/20">
           <button className="flex items-center gap-4 px-4 py-3 w-full text-on-surface-variant hover:bg-surface-bright rounded-lg">
             <HelpCircle size={20} /> Soporte
-          </button>
-          <button className="w-full py-3 mt-4 bg-error-container text-on-error-container font-bold rounded-lg hover:brightness-110 transition-all">
-            Finalizar Turno
           </button>
         </div>
       </div>
