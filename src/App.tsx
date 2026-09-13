@@ -42,6 +42,9 @@ interface BatchProcessState {
   isProcessing: boolean;
 }
 
+// Formatos MIME aceptados para el logo (PNG, JPG, WebP, GIF, SVG)
+const LOGO_ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml'];
+
 export default function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [originalImage, setOriginalImage] = useState<string | null>(null);
@@ -1120,22 +1123,49 @@ export default function App() {
                       </button>
                     )}
                   </div>
+                  <p className="text-on-surface-variant text-xs">PNG, JPG, WebP o GIF recomendados</p>
 
                   <input type="file" accept="image/*" capture="environment" ref={fileInputRef} className="hidden" onChange={handleImageUpload} />
                   <input type="file" accept="image/*" multiple ref={galleryInputRef} className="hidden" onChange={handleImageUpload} />
                   <input
-                    type="file" accept="image/png, image/jpeg" ref={logoInputRef} className="hidden"
+                    type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" ref={logoInputRef} className="hidden"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
-                      if (file) {
-                        const r = new FileReader();
-                        r.onload = (ev) => {
-                          const result = ev.target?.result as string;
+                      // Resetear el input para permitir re-seleccionar el mismo archivo
+                      e.target.value = '';
+                      if (!file) return;
+
+                      // Validación de tipo MIME (con fallback a extensión si el picker no informa el tipo)
+                      const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+                      const typeOk = LOGO_ACCEPTED_TYPES.includes(file.type) ||
+                        (!file.type && ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext));
+                      if (!typeOk) {
+                        alert('Formato no soportado. Usá PNG, JPG, WebP o GIF.');
+                        return;
+                      }
+
+                      const r = new FileReader();
+                      r.onload = (ev) => {
+                        const result = ev.target?.result as string;
+                        // Validar que la imagen realmente carga (y tiene dimensiones) antes de guardarla
+                        const testImg = new Image();
+                        testImg.onload = () => {
+                          if (!testImg.naturalWidth || !testImg.naturalHeight) {
+                            alert('El logo no tiene dimensiones válidas. Probá con PNG, JPG, WebP o GIF.');
+                            return;
+                          }
                           setLogoImage(result);
                           localStorage.setItem('timemark_logo', result);
                         };
-                        r.readAsDataURL(file);
-                      }
+                        testImg.onerror = () => {
+                          alert('No se pudo cargar el logo. Probá con PNG, JPG, WebP o GIF.');
+                        };
+                        testImg.src = result;
+                      };
+                      r.onerror = () => {
+                        alert('No se pudo leer el archivo del logo.');
+                      };
+                      r.readAsDataURL(file);
                     }}
                   />
                 </section>
