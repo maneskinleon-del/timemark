@@ -124,6 +124,9 @@ export default function App() {
 
   // Nuevo estado para bloquear guardado mientras renderiza
   const [isRendering, setIsRendering] = useState(false);
+  // Compartir todas las fotos de la cola (procesar + Web Share multi-file)
+  const [isSharingAll, setIsSharingAll] = useState(false);
+  const [shareAllProgress, setShareAllProgress] = useState('');
 
   // Reloj en vivo
   useEffect(() => {
@@ -509,9 +512,132 @@ export default function App() {
     advanceBatchIndex();
   };
 
-  // Compartir imagen (Web Share API → WhatsApp / otras apps). Fallback a descarga.
+  // Renderiza una imagen con marca de agua y devuelve dataURL (sin tocar el estado de preview)
+  const renderWatermarkToDataURL = (imgSrc: string, logoSrc: string | null, loc: LocationData): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('No canvas'));
+          return;
+        }
+
+        const maxDim = Number(settingsRef.current.resolution) || 1080;
+        const scaleDown = Math.min(1, maxDim / Math.max(img.width, img.height));
+        canvas.width = Math.round(img.width * scaleDown);
+        canvas.height = Math.round(img.height * scaleDown);
+        const scale = canvas.width / 1080;
+
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        const topRectWidth = 240 * scale;
+        const topRectHeight = 36 * scale;
+        ctx.fillRect(24 * scale, 24 * scale, topRectWidth, topRectHeight);
+        ctx.fillStyle = '#ffb95f';
+        ctx.fillRect(24 * scale, 24 * scale, 6 * scale, topRectHeight);
+        ctx.font = `bold ${16 * scale}px "JetBrains Mono", monospace`;
+        ctx.fillStyle = 'white';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('TIMEMARK SYSTEM', 44 * scale, 24 * scale + topRectHeight / 2);
+
+        const finish = (logoImg: HTMLImageElement | null) => {
+          const ctx2 = canvas.getContext('2d');
+          if (!ctx2) {
+            reject(new Error('No canvas'));
+            return;
+          }
+          const s = canvas.width / 1080;
+          const panelHeight = 180 * s;
+          const panelWidth = Math.min(canvas.width * 0.9, 800 * s);
+          const panelX = 24 * s;
+          const panelY = canvas.height - panelHeight - 24 * s;
+
+          ctx2.shadowColor = 'rgba(0,0,0,0.5)';
+          ctx2.shadowBlur = 12 * s;
+          ctx2.fillStyle = '#111827';
+          ctx2.beginPath();
+          ctx2.roundRect(panelX, panelY, panelWidth, panelHeight, [0, 16 * s, 16 * s, 0]);
+          ctx2.fill();
+          ctx2.shadowBlur = 0;
+
+          ctx2.fillStyle = '#ffb95f';
+          ctx2.fillRect(panelX, panelY, 6 * s, panelHeight);
+
+          ctx2.textBaseline = 'alphabetic';
+          ctx2.fillStyle = '#ffb95f';
+          ctx2.font = `${24 * s}px sans-serif`;
+          ctx2.fillText(`📍 ${loc.coords || 'UBICACIÓN NO DISPONIBLE'}`, panelX + 30 * s, panelY + 50 * s);
+
+          ctx2.fillStyle = 'white';
+          ctx2.font = `bold ${32 * s}px "JetBrains Mono", monospace`;
+          const placeLine = [loc.address, loc.city].filter(Boolean).join(', ') || 'DIRECCIÓN NO REGISTRADA';
+          ctx2.fillText(placeLine, panelX + 30 * s, panelY + 100 * s);
+
+          ctx2.fillStyle = '#c6c6cd';
+          ctx2.font = `${20 * s}px "JetBrains Mono", monospace`;
+          ctx2.fillText(`TIMESTAMP: ${loc.timestamp.slice(0, 16)}`, panelX + 30 * s, panelY + 145 * s);
+
+          if (logoImg) {
+            const logoSize = 130 * s;
+            const logoPadding = (panelHeight - logoSize) / 2;
+            const logoX = panelX + panelWidth - logoSize - 25 * s;
+            const logoY = panelY + logoPadding;
+            ctx2.fillStyle = 'rgba(255, 255, 255, 1)';
+            ctx2.beginPath();
+            ctx2.roundRect(logoX, logoY, logoSize, logoSize, 8 * s);
+            ctx2.fill();
+            const targetSize = logoSize - 16 * s;
+            const imgAspect = logoImg.width / logoImg.height;
+            let drawWidth = targetSize;
+            let drawHeight = targetSize;
+            let drawX = logoX + 8 * s;
+            let drawY = logoY + 8 * s;
+            if (imgAspect > 1) { drawHeight = targetSize / imgAspect; drawY += (targetSize - drawHeight) / 2; }
+            else if (imgAspect < 1) { drawWidth = targetSize * imgAspect; drawX += (targetSize - drawWidth) / 2; }
+            ctx2.drawImage(logoImg, drawX, drawY, drawWidth, drawHeight);
+            ctx2.fillStyle = '#ffb95f';
+            ctx2.font = `bold ${20 * s}px "JetBrains Mono", monospace`;
+            ctx2.textAlign = 'right';
+            ctx2.fillText('VERIFICADO', logoX - 25 * s, panelY + 145 * s);
+            ctx2.textAlign = 'left';
+          } else {
+            ctx2.fillStyle = '#ffb95f';
+            ctx2.font = `bold ${20 * s}px "JetBrains Mono", monospace`;
+            ctx2.textAlign = 'right';
+            ctx2.fillText('VERIFICADO', panelX + panelWidth - 30 * s, panelY + 145 * s);
+            ctx2.textAlign = 'left';
+          }
+
+          resolve(canvas.toDataURL('image/jpeg', 0.92));
+        };
+
+        if (logoSrc) {
+          const logo = new Image();
+          logo.onload = () => finish(logo);
+          logo.onerror = () => finish(null);
+          logo.src = logoSrc;
+        } else {
+          finish(null);
+        }
+      };
+      img.onerror = () => reject(new Error('Imagen no válida'));
+      img.src = imgSrc;
+    });
+  };
+
+  const dataURLToFile = async (dataUrl: string, name: string): Promise<File> => {
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    return new File([blob], name, { type: 'image/jpeg' });
+  };
+
+  // Compartir imagen actual (Web Share API → WhatsApp / otras apps). Fallback a descarga.
   const handleShare = async () => {
-    if (!previewImage || isRendering) return;
+    if (!previewImage || isRendering || isSharingAll) return;
 
     if (!location.coords && !location.address) {
       alert('Ubicación no disponible. Obtén la ubicación GPS o introduce una ubicación manual.');
@@ -519,9 +645,7 @@ export default function App() {
     }
 
     try {
-      const res = await fetch(previewImage);
-      const blob = await res.blob();
-      const file = new File([blob], `timemark_${Date.now()}.jpg`, { type: 'image/jpeg' });
+      const file = await dataURLToFile(previewImage, `timemark_${Date.now()}.jpg`);
 
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({
@@ -531,7 +655,6 @@ export default function App() {
             ? `Ronda · ${location.address}${location.city ? `, ${location.city}` : ''}`
             : 'Foto de ronda verificada',
         });
-        // Tras compartir con éxito, avanzamos la cola igual que al guardar
         setLogs(prev => [{
           id: Date.now(),
           img: previewImage,
@@ -542,13 +665,118 @@ export default function App() {
         return;
       }
     } catch (err: unknown) {
-      // AbortError = usuario canceló el sheet de compartir → no hacer nada
       if (err instanceof Error && err.name === 'AbortError') return;
       console.warn('Share falló, se usa descarga como fallback', err);
     }
 
     // Fallback: descargar (mismo flujo que guardar)
     handleSave();
+  };
+
+  // Compartir TODAS las fotos de la cola actual (actual + pendientes) de una sola vez
+  const handleShareAll = async () => {
+    if (isRendering || isSharingAll) return;
+    if (!location.coords && !location.address) {
+      alert('Ubicación no disponible. Obtén la ubicación GPS o introduce una ubicación manual.');
+      return;
+    }
+
+    const queueSnapshot = [...batchState.queue];
+    if (queueSnapshot.length === 0 && !previewImage) return;
+
+    setIsSharingAll(true);
+    const total = Math.max(queueSnapshot.length, previewImage ? 1 : 0);
+    setShareAllProgress(`Preparando 1/${total}…`);
+
+    try {
+      const dataUrls: string[] = [];
+      const logoSrc = logoImageRef.current;
+
+      // 1) Imagen actual en preview (si hay)
+      if (previewImage) {
+        dataUrls.push(previewImage);
+      }
+
+      // 2) Resto de la cola (si la actual ya está en preview, saltamos el índice 0)
+      const startIdx = previewImage && queueSnapshot.length > 0 ? 1 : 0;
+      for (let i = startIdx; i < queueSnapshot.length; i++) {
+        setShareAllProgress(`Preparando ${dataUrls.length + 1}/${total}…`);
+        const file = queueSnapshot[i].file;
+        const imgSrc = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => resolve(e.target?.result as string);
+          reader.onerror = () => reject(new Error(file.name));
+          reader.readAsDataURL(file);
+        });
+        const ts = buildTimestamp();
+        const loc: LocationData = { ...locationRef.current, timestamp: ts };
+        const dataUrl = await renderWatermarkToDataURL(imgSrc, logoSrc, loc);
+        dataUrls.push(dataUrl);
+      }
+
+      setShareAllProgress(`Compartiendo ${dataUrls.length} fotos…`);
+      const files: File[] = [];
+      for (let i = 0; i < dataUrls.length; i++) {
+        files.push(await dataURLToFile(dataUrls[i], `timemark_${Date.now()}_${i + 1}.jpg`));
+      }
+
+      const shareText = location.address
+        ? `Ronda · ${dataUrls.length} fotos · ${location.address}${location.city ? `, ${location.city}` : ''}`
+        : `Ronda · ${dataUrls.length} fotos verificadas`;
+
+      if (navigator.canShare && navigator.canShare({ files })) {
+        await navigator.share({
+          files,
+          title: 'TimeMark',
+          text: shareText,
+        });
+
+        // Registrar todas en logs y vaciar cola
+        setLogs(prev => [
+          ...dataUrls.map((img, idx) => ({
+            id: Date.now() + idx,
+            img,
+            time: location.timestamp.slice(0, 16),
+            address: `${location.address}, ${location.city}`
+          })).reverse(),
+          ...prev
+        ]);
+        setBatchState({ queue: [], isProcessing: false });
+        setOriginalImage(null);
+        setPreviewImage(null);
+      } else {
+        // Fallback: descargar una por una
+        for (let i = 0; i < dataUrls.length; i++) {
+          const link = document.createElement('a');
+          link.download = `timemark_${Date.now()}_${i + 1}.jpg`;
+          link.href = dataUrls[i];
+          link.click();
+          await new Promise(r => setTimeout(r, 250));
+        }
+        setLogs(prev => [
+          ...dataUrls.map((img, idx) => ({
+            id: Date.now() + idx,
+            img,
+            time: location.timestamp.slice(0, 16),
+            address: `${location.address}, ${location.city}`
+          })).reverse(),
+          ...prev
+        ]);
+        setBatchState({ queue: [], isProcessing: false });
+        setOriginalImage(null);
+        setPreviewImage(null);
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        // Usuario canceló el sheet: no vaciar cola
+        return;
+      }
+      console.error('Compartir todas falló', err);
+      alert('No se pudieron compartir todas las fotos. Probá de a una o descargalas con Guardar.');
+    } finally {
+      setIsSharingAll(false);
+      setShareAllProgress('');
+    }
   };
 
   // Descarta la imagen actual y procesa la siguiente
@@ -673,8 +901,12 @@ export default function App() {
     setIsLocationModalOpen(false);
   };
 
-  // Cantidad de elementos pendientes en la cola
+  // Cantidad de elementos pendientes en la cola (después de la actual)
   const queueLength = Math.max(0, batchState.queue.length - 1);
+  // Total de fotos en el lote actual (actual + pendientes)
+  const totalInBatch = batchState.queue.length > 0
+    ? batchState.queue.length
+    : (previewImage ? 1 : 0);
 
   return (
     <div className="flex h-screen overflow-hidden relative">
@@ -954,21 +1186,35 @@ export default function App() {
                       {/* Guardar — más grande y destacado */}
                       <button
                         onClick={handleSave}
-                        disabled={isRendering}
-                        className={`w-full py-4 text-base md:text-lg bg-secondary text-on-secondary rounded-xl font-bold shadow-[0_0_20px_rgba(255,185,95,0.35)] hover:brightness-110 active:scale-[0.98] transition-all ${isRendering ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        disabled={isRendering || isSharingAll}
+                        className={`w-full py-4 text-base md:text-lg bg-secondary text-on-secondary rounded-xl font-bold shadow-[0_0_20px_rgba(255,185,95,0.35)] hover:brightness-110 active:scale-[0.98] transition-all ${isRendering || isSharingAll ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
                         {isRendering ? 'Procesando…' : (queueLength > 0 ? 'Guardar y Siguiente' : 'Guardar')}
                       </button>
 
-                      {/* Compartir — debajo de Guardar (WhatsApp / nativo) */}
+                      {/* Compartir una — debajo de Guardar (WhatsApp / nativo) */}
                       <button
                         onClick={handleShare}
-                        disabled={isRendering}
-                        className={`w-full py-3.5 text-base border-2 border-secondary/60 text-secondary bg-secondary/10 rounded-xl font-bold hover:bg-secondary/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2 ${isRendering ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        disabled={isRendering || isSharingAll}
+                        className={`w-full py-3.5 text-base border-2 border-secondary/60 text-secondary bg-secondary/10 rounded-xl font-bold hover:bg-secondary/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2 ${isRendering || isSharingAll ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
                         <Share2 size={20} />
                         Compartir
                       </button>
+
+                      {/* Compartir todas las del lote (aparece si hay 2 o más) */}
+                      {totalInBatch > 1 && (
+                        <button
+                          onClick={handleShareAll}
+                          disabled={isRendering || isSharingAll}
+                          className={`w-full py-3.5 text-base bg-secondary/20 border-2 border-secondary text-secondary rounded-xl font-bold hover:bg-secondary/30 active:scale-[0.98] transition-all flex items-center justify-center gap-2 ${isRendering || isSharingAll ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          <Share2 size={20} />
+                          {isSharingAll
+                            ? (shareAllProgress || 'Preparando…')
+                            : `Compartir todas (${totalInBatch})`}
+                        </button>
+                      )}
                     </div>
                   )}
                 </section>
