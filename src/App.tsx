@@ -433,38 +433,54 @@ export default function App() {
         const layout = computeWatermarkLayout(canvas.width, canvas.height, {
           hasTask: !!taskLine,
           hasLogo: !!logoImg,
+          activityColumn: true,
         });
         const s = layout.s;
         const { panelX, panelY, panelWidth, panelHeight } = layout;
 
         ctx2.shadowColor = 'rgba(0,0,0,0.5)';
         ctx2.shadowBlur = 12 * s;
-        ctx2.fillStyle = '#111827';
+        ctx2.fillStyle = 'rgba(17, 24, 39, 0.6)';
         ctx2.beginPath();
         ctx2.roundRect(panelX, panelY, panelWidth, panelHeight, [0, 16 * s, 16 * s, 0]);
         ctx2.fill();
         ctx2.shadowBlur = 0;
 
-        ctx2.fillStyle = '#ffb95f';
-        ctx2.fillRect(panelX, panelY, 6 * s, panelHeight);
+        // Separador vertical entre zona izquierda y columna de actividades
+        // columnTaskX es el inicio de la columna de actividades
+        ctx2.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx2.lineWidth = 1 * s;
+        ctx2.beginPath();
+        ctx2.moveTo(layout.columnTaskX, panelY);
+        ctx2.lineTo(layout.columnTaskX, panelY + panelHeight);
+        ctx2.stroke();
 
         ctx2.textBaseline = 'alphabetic';
         ctx2.fillStyle = '#ffb95f';
         ctx2.font = `${layout.fontCoords}px sans-serif`;
-        ctx2.fillText(`📍 ${loc.coords || 'UBICACIÓN NO DISPONIBLE'}`, panelX + 30 * s, layout.coordsY);
+        // Limitar ancho de coordenadas para no invadir columna derecha
+        ctx2.fillText(`📍 ${loc.coords || 'UBICACIÓN NO DISPONIBLE'}`, panelX + 30 * s, layout.coordsY, layout.panelWidth * 0.7 - 60 * s);
 
         ctx2.fillStyle = 'white';
         ctx2.font = `bold ${layout.fontAddress}px "JetBrains Mono", monospace`;
         const placeLine = [loc.address, loc.city].filter(Boolean).join(', ') || 'DIRECCIÓN NO REGISTRADA';
-        ctx2.fillText(placeLine, panelX + 30 * s, layout.addressY);
+        // Limitar ancho de dirección para no invadir columna derecha
+        ctx2.fillText(placeLine, panelX + 30 * s, layout.addressY, layout.panelWidth * 0.7 - 60 * s);
 
         // Actividad de ronda en curso: se graba en la propia foto.
+        // Las actividades se dibujan en la columna derecha, separadas del logo.
         if (taskLine && layout.taskY !== null) {
           ctx2.fillStyle = '#ffb95f';
           ctx2.font = `bold ${layout.fontTask}px "JetBrains Mono", monospace`;
-          // Se recorta al ancho util del panel para que varias actividades
-          // nunca desborden fuera de la marca de agua.
-          ctx2.fillText(`ACTIVIDAD: ${taskLine}`, panelX + 30 * s, layout.taskY, panelWidth - 60 * s);
+          // Se obtienen las etiquetas de actividad (se usa roundTaskLabels para evitar
+          // el sufijo +N embebido en taskLine al haber más de 3 actividades)
+          const activityLabels = roundTaskLabels(taskIds);
+          // Calcula la posición inicial para centrar el grupo verticalmente
+          const startY = layout.columnTaskY - (layout.columnTaskFontTask * 1.4 + 8) * (activityLabels.length - 1) / 2;
+          activityLabels.forEach((label, index) => {
+            const lineY = startY + index * (layout.columnTaskFontTask * 1.4 + 8);
+            ctx2.fillText(`ACTIVIDAD: ${label}`, layout.columnTaskX + 20, lineY, layout.columnTaskWidth - 40);
+          });
         }
 
         ctx2.fillStyle = '#c6c6cd';
@@ -693,37 +709,53 @@ export default function App() {
           const layout = computeWatermarkLayout(canvas.width, canvas.height, {
             hasTask: !!taskLine,
             hasLogo: !!logoImg,
+            activityColumn: true,
           });
           const { panelX, panelY, panelWidth, panelHeight } = layout;
 
           ctx2.shadowColor = 'rgba(0,0,0,0.5)';
           ctx2.shadowBlur = 12 * s;
-          ctx2.fillStyle = '#111827';
+          ctx2.fillStyle = 'rgba(17, 24, 39, 0.6)';
           ctx2.beginPath();
           ctx2.roundRect(panelX, panelY, panelWidth, panelHeight, [0, 16 * s, 16 * s, 0]);
           ctx2.fill();
           ctx2.shadowBlur = 0;
 
-          ctx2.fillStyle = '#ffb95f';
-          ctx2.fillRect(panelX, panelY, 6 * s, panelHeight);
+          // Separador vertical entre zona izquierda y columna de actividades
+          // columnTaskX es el inicio de la columna de actividades
+          ctx2.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+          ctx2.lineWidth = 1 * s;
+          ctx2.beginPath();
+          ctx2.moveTo(layout.columnTaskX, panelY);
+          ctx2.lineTo(layout.columnTaskX, panelY + panelHeight);
+          ctx2.stroke();
 
           ctx2.textBaseline = 'alphabetic';
           ctx2.fillStyle = '#ffb95f';
           ctx2.font = `${layout.fontCoords}px sans-serif`;
-          ctx2.fillText(`📍 ${loc.coords || 'UBICACIÓN NO DISPONIBLE'}`, panelX + 30 * s, layout.coordsY);
+          // Limitar ancho de coordenadas para no invadir columna derecha
+          ctx2.fillText(`📍 ${loc.coords || 'UBICACIÓN NO DISPONIBLE'}`, panelX + 30 * s, layout.coordsY, layout.panelWidth * 0.7 - 60 * s);
 
           ctx2.fillStyle = 'white';
           ctx2.font = `bold ${layout.fontAddress}px "JetBrains Mono", monospace`;
           const placeLine = [loc.address, loc.city].filter(Boolean).join(', ') || 'DIRECCIÓN NO REGISTRADA';
-          ctx2.fillText(placeLine, panelX + 30 * s, layout.addressY);
+          // Limitar ancho de dirección para no invadir columna derecha
+          ctx2.fillText(placeLine, panelX + 30 * s, layout.addressY, layout.panelWidth * 0.7 - 60 * s);
 
           // Actividad de ronda en curso: se graba en la propia foto.
+          // Las actividades se dibujan en la columna derecha, separadas del logo.
           if (taskLine && layout.taskY !== null) {
             ctx2.fillStyle = '#ffb95f';
             ctx2.font = `bold ${layout.fontTask}px "JetBrains Mono", monospace`;
-            // Se recorta al ancho util del panel para que varias actividades
-          // nunca desborden fuera de la marca de agua.
-          ctx2.fillText(`ACTIVIDAD: ${taskLine}`, panelX + 30 * s, layout.taskY, panelWidth - 60 * s);
+            // Se obtienen las etiquetas de actividad (se usa roundTaskLabels para evitar
+            // el sufijo +N embebido en taskLine al haber más de 3 actividades)
+            const activityLabels = roundTaskLabels(taskIds);
+            // Calcula la posición inicial para centrar el grupo verticalmente
+            const startY = layout.columnTaskY - (layout.columnTaskFontTask * 1.4 + 8) * (activityLabels.length - 1) / 2;
+            activityLabels.forEach((label, index) => {
+              const lineY = startY + index * (layout.columnTaskFontTask * 1.4 + 8);
+              ctx2.fillText(`ACTIVIDAD: ${label}`, layout.columnTaskX + 20, lineY, layout.columnTaskWidth - 40);
+            });
           }
 
           ctx2.fillStyle = '#c6c6cd';
