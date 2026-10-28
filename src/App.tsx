@@ -451,21 +451,21 @@ export default function App() {
         ctx2.strokeStyle = 'rgba(255, 255, 255, 0.3)';
         ctx2.lineWidth = 1 * s;
         ctx2.beginPath();
-        ctx2.moveTo(layout.columnTaskX, panelY);
-        ctx2.lineTo(layout.columnTaskX, panelY + panelHeight);
+        ctx2.moveTo(layout.columnX, panelY);
+        ctx2.lineTo(layout.columnX, panelY + panelHeight);
         ctx2.stroke();
 
         ctx2.textBaseline = 'alphabetic';
         ctx2.fillStyle = '#ffb95f';
         ctx2.font = `${layout.fontCoords}px sans-serif`;
         // Limitar ancho de coordenadas para no invadir columna derecha
-        ctx2.fillText(`📍 ${loc.coords || 'UBICACIÓN NO DISPONIBLE'}`, panelX + 30 * s, layout.coordsY, layout.panelWidth * 0.7 - 60 * s);
+        ctx2.fillText(`📍 ${loc.coords || 'UBICACIÓN NO DISPONIBLE'}`, layout.textX, layout.coordsY, layout.textWidth);
 
         ctx2.fillStyle = 'white';
         ctx2.font = `bold ${layout.fontAddress}px "JetBrains Mono", monospace`;
         const placeLine = [loc.address, loc.city].filter(Boolean).join(', ') || 'DIRECCIÓN NO REGISTRADA';
         // Limitar ancho de dirección para no invadir columna derecha
-        ctx2.fillText(placeLine, panelX + 30 * s, layout.addressY, layout.panelWidth * 0.7 - 60 * s);
+        ctx2.fillText(placeLine, layout.textX, layout.addressY, layout.textWidth);
 
         // Actividad de ronda en curso: se graba en la propia foto.
         // Las actividades se dibujan en la columna derecha, separadas del logo.
@@ -479,13 +479,13 @@ export default function App() {
           const startY = layout.columnTaskY - (layout.columnTaskFontTask * 1.4 + 8) * (activityLabels.length - 1) / 2;
           activityLabels.forEach((label, index) => {
             const lineY = startY + index * (layout.columnTaskFontTask * 1.4 + 8);
-            ctx2.fillText(`ACTIVIDAD: ${label}`, layout.columnTaskX + 20, lineY, layout.columnTaskWidth - 40);
+            ctx2.fillText(`ACTIVIDAD: ${label}`, layout.columnTaskX, lineY, layout.columnTaskWidth);
           });
         }
 
         ctx2.fillStyle = '#c6c6cd';
         ctx2.font = `${layout.fontTimestamp}px "JetBrains Mono", monospace`;
-        ctx2.fillText(`TIMESTAMP: ${loc.timestamp.slice(0, 16)}`, panelX + 30 * s, layout.timestampY);
+        ctx2.fillText(`TIMESTAMP: ${loc.timestamp.slice(0, 16)}`, layout.textX, layout.timestampY, layout.textWidth);
 
         if (logoImg) {
           const logoSize = layout.logoSize;
@@ -516,13 +516,13 @@ export default function App() {
           ctx2.fillStyle = '#ffb95f';
           ctx2.font = `bold ${layout.fontVerified}px "JetBrains Mono", monospace`;
           ctx2.textAlign = 'right';
-          ctx2.fillText('VERIFICADO', logoX - 25 * s, layout.verifiedY);
+          ctx2.fillText('VERIFICADO', layout.verifiedX, layout.verifiedY);
           ctx2.textAlign = 'left';
         } else {
           ctx2.fillStyle = '#ffb95f';
           ctx2.font = `bold ${layout.fontVerified}px "JetBrains Mono", monospace`;
           ctx2.textAlign = 'right';
-          ctx2.fillText('VERIFICADO', panelX + panelWidth - 30 * s, layout.verifiedY);
+          ctx2.fillText('VERIFICADO', layout.verifiedX, layout.verifiedY);
           ctx2.textAlign = 'left';
         }
 
@@ -726,21 +726,21 @@ export default function App() {
           ctx2.strokeStyle = 'rgba(255, 255, 255, 0.3)';
           ctx2.lineWidth = 1 * s;
           ctx2.beginPath();
-          ctx2.moveTo(layout.columnTaskX, panelY);
-          ctx2.lineTo(layout.columnTaskX, panelY + panelHeight);
+          ctx2.moveTo(layout.columnX, panelY);
+          ctx2.lineTo(layout.columnX, panelY + panelHeight);
           ctx2.stroke();
 
           ctx2.textBaseline = 'alphabetic';
           ctx2.fillStyle = '#ffb95f';
           ctx2.font = `${layout.fontCoords}px sans-serif`;
           // Limitar ancho de coordenadas para no invadir columna derecha
-          ctx2.fillText(`📍 ${loc.coords || 'UBICACIÓN NO DISPONIBLE'}`, panelX + 30 * s, layout.coordsY, layout.panelWidth * 0.7 - 60 * s);
+          ctx2.fillText(`📍 ${loc.coords || 'UBICACIÓN NO DISPONIBLE'}`, layout.textX, layout.coordsY, layout.textWidth);
 
           ctx2.fillStyle = 'white';
           ctx2.font = `bold ${layout.fontAddress}px "JetBrains Mono", monospace`;
           const placeLine = [loc.address, loc.city].filter(Boolean).join(', ') || 'DIRECCIÓN NO REGISTRADA';
           // Limitar ancho de dirección para no invadir columna derecha
-          ctx2.fillText(placeLine, panelX + 30 * s, layout.addressY, layout.panelWidth * 0.7 - 60 * s);
+          ctx2.fillText(placeLine, layout.textX, layout.addressY, layout.textWidth);
 
           // Actividad de ronda en curso: se graba en la propia foto.
           // Las actividades se dibujan en la columna derecha, separadas del logo.
@@ -754,13 +754,13 @@ export default function App() {
             const startY = layout.columnTaskY - (layout.columnTaskFontTask * 1.4 + 8) * (activityLabels.length - 1) / 2;
             activityLabels.forEach((label, index) => {
               const lineY = startY + index * (layout.columnTaskFontTask * 1.4 + 8);
-              ctx2.fillText(`ACTIVIDAD: ${label}`, layout.columnTaskX + 20, lineY, layout.columnTaskWidth - 40);
+              ctx2.fillText(`ACTIVIDAD: ${label}`, layout.columnTaskX, lineY, layout.columnTaskWidth);
             });
           }
 
           ctx2.fillStyle = '#c6c6cd';
           ctx2.font = `${layout.fontTimestamp}px "JetBrains Mono", monospace`;
-          ctx2.fillText(`TIMESTAMP: ${loc.timestamp.slice(0, 16)}`, panelX + 30 * s, layout.timestampY);
+          ctx2.fillText(`TIMESTAMP: ${loc.timestamp.slice(0, 16)}`, layout.textX, layout.timestampY, layout.textWidth);
 
           if (logoImg) {
             const logoSize = layout.logoSize;
@@ -788,13 +788,13 @@ export default function App() {
             ctx2.fillStyle = '#ffb95f';
             ctx2.font = `bold ${layout.fontVerified}px "JetBrains Mono", monospace`;
             ctx2.textAlign = 'right';
-            ctx2.fillText('VERIFICADO', logoX - 25 * s, layout.verifiedY);
+            ctx2.fillText('VERIFICADO', layout.verifiedX, layout.verifiedY);
             ctx2.textAlign = 'left';
           } else {
             ctx2.fillStyle = '#ffb95f';
             ctx2.font = `bold ${layout.fontVerified}px "JetBrains Mono", monospace`;
             ctx2.textAlign = 'right';
-            ctx2.fillText('VERIFICADO', panelX + panelWidth - 30 * s, layout.verifiedY);
+            ctx2.fillText('VERIFICADO', layout.verifiedX, layout.verifiedY);
             ctx2.textAlign = 'left';
           }
 

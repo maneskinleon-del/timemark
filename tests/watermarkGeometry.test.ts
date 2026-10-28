@@ -103,3 +103,49 @@ describe('computeWatermarkLayout', () => {
     }
   });
 });
+
+// Modo columna de actividades: las actividades viven en una columna derecha
+// independiente; logo, coordenadas, direccion y timestamp quedan a la izquierda.
+// Regresion: en e92d89a el logo seguia a la derecha, encima de las actividades,
+// y `activityColumn` no alteraba el layout.
+describe('computeWatermarkLayout con activityColumn', () => {
+  const sizes: Array<[number, number]> = [[1080, 810], [2160, 2880], [1920, 1080], [4000, 1000]];
+  const col = { hasTask: true, activityColumn: true };
+
+  it('el flag cambia efectivamente el layout', () => {
+    const on = computeWatermarkLayout(1080, 810, { ...col, hasLogo: true });
+    const off = computeWatermarkLayout(1080, 810, { hasTask: true, hasLogo: true });
+    expect(on.logoX).not.toBe(off.logoX);
+  });
+
+  it.each(sizes)('el logo queda en la zona izquierda, sin tocar la columna (%i x %i)', (w, h) => {
+    const l = computeWatermarkLayout(w, h, { ...col, hasLogo: true });
+    expect(l.logoX).toBeGreaterThanOrEqual(l.panelX);
+    expect(l.logoX + l.logoSize).toBeLessThanOrEqual(l.columnX);
+    expect(l.logoX + l.logoSize).toBeLessThanOrEqual(l.textX);
+  });
+
+  it.each(sizes)('el texto de ubicacion no invade la columna ni el logo (%i x %i)', (w, h) => {
+    for (const hasLogo of [true, false]) {
+      const l = computeWatermarkLayout(w, h, { ...col, hasLogo });
+      expect(l.textWidth).toBeGreaterThan(0);
+      expect(l.textX + l.textWidth).toBeLessThanOrEqual(l.columnX + 0.001);
+    }
+  });
+
+  it.each(sizes)('las actividades y VERIFICADO quedan dentro de la columna y del panel (%i x %i)', (w, h) => {
+    for (const hasLogo of [true, false]) {
+      const l = computeWatermarkLayout(w, h, { ...col, hasLogo });
+      const panelRight = l.panelX + l.panelWidth;
+      expect(l.columnTaskX).toBeGreaterThanOrEqual(l.columnX);
+      expect(l.columnTaskX + l.columnTaskWidth).toBeLessThanOrEqual(panelRight + 0.001);
+      expect(l.verifiedX).toBeLessThanOrEqual(panelRight);
+      expect(l.verifiedX).toBeGreaterThan(l.columnX);
+    }
+  });
+
+  it('sin el flag se conserva el layout clasico (logo a la derecha)', () => {
+    const l = computeWatermarkLayout(1080, 810, { hasTask: true, hasLogo: true });
+    expect(l.logoX + l.logoSize).toBeGreaterThan(l.panelX + l.panelWidth * 0.7);
+  });
+});

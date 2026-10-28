@@ -43,7 +43,7 @@ export const COLUMN_GAP = 20;
 
 // Baselines de la columna derecha (actividades).
 export const COLUMN_TASK_X = 30;        // offset X dentro de la columna derecha
-export const COLUMN_TASK_LINE_BASE = 130; // baseline Y base para la linea de actividades dentro de la columna
+export const COLUMN_TASK_LINE_BASE = 115; // baseline Y base para la linea de actividades dentro de la columna
 
 // Espacio entre multiples actividades en la columna derecha (en unidades de referencia).
 export const COLUMN_TASK_SPACING = 35;
@@ -90,6 +90,12 @@ export interface WatermarkLayout {
   fontTimestamp: number;
   fontVerified: number;
   // NUEVO: valores de la columna derecha
+  // Modo columna de actividades (activityColumn): inicio de la columna (separador),
+  // zona izquierda de texto, y ancla de VERIFICADO. Sin el modo, equivalen al layout clasico.
+  columnX: number;
+  textX: number;
+  textWidth: number;
+  verifiedX: number;
   columnTaskX: number;
   columnTaskY: number;
   columnTaskWidth: number;
@@ -139,11 +145,19 @@ export const computeWatermarkLayout = (
   const timestampY = options.hasTask ? line(LINE_TIMESTAMP_Y_WITH_TASK) : line(LINE_TIMESTAMP_Y_NO_TASK);
 
   const logoSize = options.hasLogo ? LOGO_SIZE * s * scale : 0;
-  const logoX = panelX + panelWidth - logoSize - 25 * s;
+  const panelRight = panelX + panelWidth;
+  const column = !!options.activityColumn;
+
+  // Zona izquierda (logo + coordenadas + direccion + timestamp) | columna derecha (actividades).
+  const columnX = panelX + panelWidth * COLUMN_RATIO_LEFT;
+  const leftZoneRight = columnX - COLUMN_GAP * s;
+  const logoX = column ? panelX + 25 * s : panelRight - logoSize - 25 * s;
   const logoY = panelY + (panelHeight - logoSize) / 2;
-  const leftColumnWidth = panelWidth * COLUMN_RATIO_LEFT;
-  const rightColumnWidth = panelWidth * COLUMN_RATIO_RIGHT - COLUMN_GAP;
-  const rightColumnX = panelX + leftColumnWidth + COLUMN_GAP;
+  const textX = column && options.hasLogo ? logoX + logoSize + 20 * s : panelX + 30 * s;
+  const textWidth = (column ? leftZoneRight : panelRight - 30 * s) - textX;
+  const columnTaskX = columnX + 20 * s;
+  const columnTaskWidth = panelRight - 20 * s - columnTaskX;
+  const verifiedX = column ? panelRight - 20 * s : (options.hasLogo ? logoX - 25 * s : panelRight - 30 * s);
 
   return {
     s,
@@ -163,9 +177,13 @@ export const computeWatermarkLayout = (
     logoX,
     logoY,
     // NUEVO: valores de la columna derecha
-    columnTaskX: rightColumnX + COLUMN_TASK_X,
+    columnX,
+    textX,
+    textWidth,
+    verifiedX,
+    columnTaskX,
     columnTaskY: line(COLUMN_TASK_LINE_BASE),
-    columnTaskWidth: rightColumnWidth,
+    columnTaskWidth,
     columnTaskFontTask: FONT_TASK_BASE * s * scale,
     columnTaskFontTimestamp: FONT_TIMESTAMP_BASE * s * scale,
     // Fuentes resultantes (en px del lienzo)
