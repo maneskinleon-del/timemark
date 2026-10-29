@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeWatermarkLayout,
+  computeActivitiesLayout,
   layoutFitsCanvas,
   PANEL_BASE_HEIGHT,
   PANEL_BASE_HEIGHT_NO_TASK,
@@ -104,48 +105,39 @@ describe('computeWatermarkLayout', () => {
   });
 });
 
-// Modo columna de actividades: las actividades viven en una columna derecha
-// independiente; logo, coordenadas, direccion y timestamp quedan a la izquierda.
-// Regresion: en e92d89a el logo seguia a la derecha, encima de las actividades,
-// y `activityColumn` no alteraba el layout.
-describe('computeWatermarkLayout con activityColumn', () => {
-  const sizes: Array<[number, number]> = [[1080, 810], [2160, 2880], [1920, 1080], [4000, 1000]];
-  const col = { hasTask: true, activityColumn: true };
+// Bloque "ACTIVIDADES DE RONDA": va FUERA del panel, arriba a la derecha, y no
+// altera la geometria del panel. Regresion: en a4e83d9 las actividades estaban
+// dentro del panel (columna) y "VERIFICADO" pisaba la ultima.
+describe('computeActivitiesLayout (bloque fuera del panel)', () => {
+  const sizes: Array<[number, number]> = [[1080, 810], [1080, 608], [2160, 2880], [1920, 1080]];
 
-  it('el flag cambia efectivamente el layout', () => {
-    const on = computeWatermarkLayout(1080, 810, { ...col, hasLogo: true });
-    const off = computeWatermarkLayout(1080, 810, { hasTask: true, hasLogo: true });
-    expect(on.logoX).not.toBe(off.logoX);
+  it('sin actividades seleccionadas no hay bloque', () => {
+    const panel = computeWatermarkLayout(1080, 810, { hasTask: false, hasLogo: true });
+    expect(computeActivitiesLayout(1080, 810, panel, 0)).toBeNull();
   });
 
-  it.each(sizes)('el logo queda en la zona izquierda, sin tocar la columna (%i x %i)', (w, h) => {
-    const l = computeWatermarkLayout(w, h, { ...col, hasLogo: true });
-    expect(l.logoX).toBeGreaterThanOrEqual(l.panelX);
-    expect(l.logoX + l.logoSize).toBeLessThanOrEqual(l.columnX);
-    expect(l.logoX + l.logoSize).toBeLessThanOrEqual(l.textX);
-  });
-
-  it.each(sizes)('el texto de ubicacion no invade la columna ni el logo (%i x %i)', (w, h) => {
-    for (const hasLogo of [true, false]) {
-      const l = computeWatermarkLayout(w, h, { ...col, hasLogo });
-      expect(l.textWidth).toBeGreaterThan(0);
-      expect(l.textX + l.textWidth).toBeLessThanOrEqual(l.columnX + 0.001);
+  it.each(sizes)('el bloque queda a la derecha, dentro del lienzo y sobre el panel, de 1 a 6 actividades (%i x %i)', (w, h) => {
+    const panel = computeWatermarkLayout(w, h, { hasTask: false, hasLogo: true });
+    for (let n = 1; n <= 6; n++) {
+      const a = computeActivitiesLayout(w, h, panel, n)!;
+      expect(a.x).toBeGreaterThan(w / 2);
+      expect(a.x + a.width).toBeLessThanOrEqual(w);
+      expect(a.titleY).toBeGreaterThan(0);
+      expect(a.bottom).toBeLessThanOrEqual(panel.panelY + 0.001);
+      expect(a.fontName).toBeGreaterThan(0);
     }
   });
 
-  it.each(sizes)('las actividades y VERIFICADO quedan dentro de la columna y del panel (%i x %i)', (w, h) => {
-    for (const hasLogo of [true, false]) {
-      const l = computeWatermarkLayout(w, h, { ...col, hasLogo });
-      const panelRight = l.panelX + l.panelWidth;
-      expect(l.columnTaskX).toBeGreaterThanOrEqual(l.columnX);
-      expect(l.columnTaskX + l.columnTaskWidth).toBeLessThanOrEqual(panelRight + 0.001);
-      expect(l.verifiedX).toBeLessThanOrEqual(panelRight);
-      expect(l.verifiedX).toBeGreaterThan(l.columnX);
-    }
+  it('con espacio de sobra muestra descripciones; si no caben las omite en vez de pisar el panel', () => {
+    const roomy = computeWatermarkLayout(1080, 810, { hasTask: false, hasLogo: true });
+    expect(computeActivitiesLayout(1080, 810, roomy, 3)!.descOffset).not.toBeNull();
+    const tight = computeWatermarkLayout(1080, 608, { hasTask: false, hasLogo: true });
+    expect(computeActivitiesLayout(1080, 608, tight, 6)!.descOffset).toBeNull();
   });
 
-  it('sin el flag se conserva el layout clasico (logo a la derecha)', () => {
-    const l = computeWatermarkLayout(1080, 810, { hasTask: true, hasLogo: true });
-    expect(l.logoX + l.logoSize).toBeGreaterThan(l.panelX + l.panelWidth * 0.7);
+  it('el panel no depende de las actividades (hasTask=false siempre)', () => {
+    const a = computeWatermarkLayout(1080, 810, { hasTask: false, hasLogo: true });
+    expect(a.panelHeight).toBe(PANEL_BASE_HEIGHT_NO_TASK * a.s);
+    expect(a.taskY).toBeNull();
   });
 });

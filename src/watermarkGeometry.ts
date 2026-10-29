@@ -32,34 +32,6 @@ export const LOGO_SIZE = 130;
 // limite duro (el panel debe caber SIEMPRE), solo como aviso informativo.
 export const LEGIBILITY_SCALE_FLOOR = 0.55;
 
-// --- Configuracion de columnas ---
-// El panel se divide en zona izquierda (logo e informacion) y columna derecha (actividades).
-// El ancho del panel se reparte: 70% para la zona izquierda, 30% para la columna derecha de actividades.
-export const COLUMN_RATIO_LEFT = 0.7;   // zona izquierda: 70% ancho panel
-export const COLUMN_RATIO_RIGHT = 0.3;  // columna derecha: 30% ancho panel
-
-// Margen horizontal entre zona izquierda y columna derecha (en unidades de referencia).
-export const COLUMN_GAP = 20;
-
-// Baselines de la columna derecha (actividades).
-export const COLUMN_TASK_X = 30;        // offset X dentro de la columna derecha
-export const COLUMN_TASK_LINE_BASE = 115; // baseline Y base para la linea de actividades dentro de la columna
-
-// Espacio entre multiples actividades en la columna derecha (en unidades de referencia).
-export const COLUMN_TASK_SPACING = 35;
-
-// Font sizes resultantes (en px del lienzo).
-// Fuente para la coordenadas.
-export const FONT_COORDS_BASE = 24;
-// Fuente para la direccion.
-export const FONT_ADDRESS_BASE = 32;
-// Fuente para la tarea/actividad.
-export const FONT_TASK_BASE = 20;
-// Fuente para la marca de tiempo.
-export const FONT_TIMESTAMP_BASE = 20;
-// Fuente para VERIFICADO.
-export const FONT_VERIFIED_BASE = 20;
-
 export interface WatermarkLayout {
   // Escala del lienzo respecto del ancho de referencia.
   s: number;
@@ -89,18 +61,6 @@ export interface WatermarkLayout {
   fontTask: number;
   fontTimestamp: number;
   fontVerified: number;
-  // NUEVO: valores de la columna derecha
-  // Modo columna de actividades (activityColumn): inicio de la columna (separador),
-  // zona izquierda de texto, y ancla de VERIFICADO. Sin el modo, equivalen al layout clasico.
-  columnX: number;
-  textX: number;
-  textWidth: number;
-  verifiedX: number;
-  columnTaskX: number;
-  columnTaskY: number;
-  columnTaskWidth: number;
-  columnTaskFontTask: number;
-  columnTaskFontTimestamp: number;
 }
 
 /**
@@ -114,7 +74,7 @@ export interface WatermarkLayout {
 export const computeWatermarkLayout = (
   canvasWidth: number,
   canvasHeight: number,
-  options: { hasTask: boolean; hasLogo: boolean; activityColumn?: boolean },
+  options: { hasTask: boolean; hasLogo: boolean },
 ): WatermarkLayout => {
   const s = canvasWidth / WATERMARK_BASE_WIDTH;
   const baseHeight = options.hasTask ? PANEL_BASE_HEIGHT : PANEL_BASE_HEIGHT_NO_TASK;
@@ -145,19 +105,8 @@ export const computeWatermarkLayout = (
   const timestampY = options.hasTask ? line(LINE_TIMESTAMP_Y_WITH_TASK) : line(LINE_TIMESTAMP_Y_NO_TASK);
 
   const logoSize = options.hasLogo ? LOGO_SIZE * s * scale : 0;
-  const panelRight = panelX + panelWidth;
-  const column = !!options.activityColumn;
-
-  // Zona izquierda (logo + coordenadas + direccion + timestamp) | columna derecha (actividades).
-  const columnX = panelX + panelWidth * COLUMN_RATIO_LEFT;
-  const leftZoneRight = columnX - COLUMN_GAP * s;
-  const logoX = column ? panelX + 25 * s : panelRight - logoSize - 25 * s;
+  const logoX = panelX + panelWidth - logoSize - 25 * s;
   const logoY = panelY + (panelHeight - logoSize) / 2;
-  const textX = column && options.hasLogo ? logoX + logoSize + 20 * s : panelX + 30 * s;
-  const textWidth = (column ? leftZoneRight : panelRight - 30 * s) - textX;
-  const columnTaskX = columnX + 20 * s;
-  const columnTaskWidth = panelRight - 20 * s - columnTaskX;
-  const verifiedX = column ? panelRight - 20 * s : (options.hasLogo ? logoX - 25 * s : panelRight - 30 * s);
 
   return {
     s,
@@ -176,17 +125,6 @@ export const computeWatermarkLayout = (
     logoSize,
     logoX,
     logoY,
-    // NUEVO: valores de la columna derecha
-    columnX,
-    textX,
-    textWidth,
-    verifiedX,
-    columnTaskX,
-    columnTaskY: line(COLUMN_TASK_LINE_BASE),
-    columnTaskWidth,
-    columnTaskFontTask: FONT_TASK_BASE * s * scale,
-    columnTaskFontTimestamp: FONT_TIMESTAMP_BASE * s * scale,
-    // Fuentes resultantes (en px del lienzo)
     fontCoords: 24 * s * scale,
     fontAddress: 32 * s * scale,
     fontTask: 20 * s * scale,
@@ -195,44 +133,82 @@ export const computeWatermarkLayout = (
   };
 };
 
-/**
- * Obtiene la posicion X para dibujar actividades en la columna derecha.
- * Llama a computeWatermarkLayout para obtener la posicion calculada.
- */
-export const getColumnTaskX = (layout: WatermarkLayout): number => {
-  return layout.columnTaskX;
-};
+// --- Bloque de actividades (FUERA del panel) --------------------------------------
+// Titulo "ACTIVIDADES DE RONDA" y, debajo, solo las actividades seleccionadas
+// (nombre + descripcion), sobre la foto, arriba a la derecha y sin fondo.
+// Si no caben sobre el panel se comprimen; si aun asi quedarian muy pequenas se
+// omiten las descripciones.
+export const ACT_BLOCK_X_RATIO = 0.63;
+export const ACT_RIGHT_MARGIN = 24;
+export const ACT_TITLE_Y = 56;
+export const ACT_TITLE_TO_FIRST = 52;
+export const ACT_PITCH_FULL = 72;
+export const ACT_PITCH_COMPACT = 40;
+export const ACT_NAME_TO_DESC = 26;
+export const ACT_DESCENT = 8;
+export const ACT_GAP_ABOVE_PANEL = 16;
+export const ACT_FONT_TITLE = 22;
+export const ACT_FONT_NAME = 26;
+export const ACT_FONT_DESC = 20;
+export const ACT_FULL_MIN_SCALE = 0.75;
+export const ACT_MIN_SCALE = 0.35;
 
-/**
- * Obtiene la posicion Y para dibujar la linea de actividades en la columna derecha.
- * Llama a computeWatermarkLayout para obtener la posicion calculada.
- */
-export const getColumnTaskY = (layout: WatermarkLayout): number => {
-  return layout.columnTaskY;
-};
+export interface ActivitiesLayout {
+  x: number;
+  width: number;
+  titleY: number;
+  firstNameY: number;
+  pitch: number;
+  // Distancia nombre -> descripcion (null si se omiten las descripciones).
+  descOffset: number | null;
+  fontTitle: number;
+  fontName: number;
+  fontDesc: number;
+  // Borde inferior del bloque (px del lienzo).
+  bottom: number;
+  scale: number;
+}
 
-/**
- * Obtiene el ancho disponible para la columna de actividades.
- * Llama a computeWatermarkLayout para obtener el ancho calculado.
- */
-export const getColumnTaskWidth = (layout: WatermarkLayout): number => {
-  return layout.columnTaskWidth;
-};
+export const computeActivitiesLayout = (
+  canvasWidth: number,
+  canvasHeight: number,
+  panel: { panelY: number },
+  count: number,
+): ActivitiesLayout | null => {
+  if (count <= 0) return null;
+  const s = canvasWidth / WATERMARK_BASE_WIDTH;
+  const x = canvasWidth * ACT_BLOCK_X_RATIO;
+  const width = canvasWidth - x - ACT_RIGHT_MARGIN * s;
+  const titleY = ACT_TITLE_Y * s;
+  const limit = Math.min(canvasHeight, panel.panelY - ACT_GAP_ABOVE_PANEL * s);
+  const availUnits = (limit - titleY) / s;
 
-/**
- * Obtiene el font size para la tarea en la columna derecha.
- * Llama a computeWatermarkLayout para obtener el font size calculado.
- */
-export const getColumnTaskFontTask = (layout: WatermarkLayout): number => {
-  return layout.columnTaskFontTask;
-};
+  const fullUnits = ACT_TITLE_TO_FIRST + (count - 1) * ACT_PITCH_FULL + ACT_NAME_TO_DESC + ACT_DESCENT;
+  const compactUnits = ACT_TITLE_TO_FIRST + (count - 1) * ACT_PITCH_COMPACT + ACT_DESCENT;
+  const kFull = availUnits / fullUnits;
+  const withDesc = kFull >= ACT_FULL_MIN_SCALE;
+  const k = withDesc
+    ? Math.min(1, kFull)
+    : Math.max(ACT_MIN_SCALE, Math.min(1, availUnits / compactUnits));
 
-/**
- * Obtiene el font size para la marca de tiempo en la columna derecha.
- * Llama a computeWatermarkLayout para obtener el font size calculado.
- */
-export const getColumnTaskFontTimestamp = (layout: WatermarkLayout): number => {
-  return layout.columnTaskFontTimestamp;
+  const firstNameY = titleY + ACT_TITLE_TO_FIRST * s * k;
+  const pitch = (withDesc ? ACT_PITCH_FULL : ACT_PITCH_COMPACT) * s * k;
+  const descOffset = withDesc ? ACT_NAME_TO_DESC * s * k : null;
+  const bottom = firstNameY + (count - 1) * pitch + (descOffset ?? 0) + ACT_DESCENT * s * k;
+
+  return {
+    x,
+    width,
+    titleY,
+    firstNameY,
+    pitch,
+    descOffset,
+    fontTitle: ACT_FONT_TITLE * s * k,
+    fontName: ACT_FONT_NAME * s * k,
+    fontDesc: ACT_FONT_DESC * s * k,
+    bottom,
+    scale: k,
+  };
 };
 
 /**

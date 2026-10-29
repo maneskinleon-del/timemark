@@ -39,10 +39,11 @@ import {
   loadRoundTasks,
   normalizeTaskIds,
   roundTaskLabels,
-  roundTasksWatermarkLine,
+  roundTaskItems,
   saveRoundTasks,
 } from './roundTasks';
-import { computeWatermarkLayout } from './watermarkGeometry';
+import { computeWatermarkLayout, computeActivitiesLayout } from './watermarkGeometry';
+import { drawActivitiesBlock } from './activitiesBlock';
 import LogCard from './components/LogCard';
 
 // Re-exportar el catalogo desde App para mantener la API publica estable.
@@ -433,11 +434,9 @@ export default function App() {
         if (!ctx2) return;
 
         // Selección de actividades FIJADA al inicio de la operacion (no se relee del ref aqui).
-        const taskLine = roundTasksWatermarkLine(taskIds);
         const layout = computeWatermarkLayout(canvas.width, canvas.height, {
-          hasTask: !!taskLine,
+          hasTask: false, // las actividades van fuera del panel (bloque aparte)
           hasLogo: !!logoImg,
-          activityColumn: true,
         });
         const s = layout.s;
         const { panelX, panelY, panelWidth, panelHeight } = layout;
@@ -450,46 +449,28 @@ export default function App() {
         ctx2.fill();
         ctx2.shadowBlur = 0;
 
-        // Separador vertical entre zona izquierda y columna de actividades
-        // columnTaskX es el inicio de la columna de actividades
-        ctx2.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-        ctx2.lineWidth = 1 * s;
-        ctx2.beginPath();
-        ctx2.moveTo(layout.columnX, panelY);
-        ctx2.lineTo(layout.columnX, panelY + panelHeight);
-        ctx2.stroke();
+        ctx2.fillStyle = '#ffb95f';
+        ctx2.fillRect(panelX, panelY, 6 * s, panelHeight);
 
         ctx2.textBaseline = 'alphabetic';
         ctx2.fillStyle = '#ffb95f';
         ctx2.font = `${layout.fontCoords}px sans-serif`;
-        // Limitar ancho de coordenadas para no invadir columna derecha
-        ctx2.fillText(`📍 ${loc.coords || 'UBICACIÓN NO DISPONIBLE'}`, layout.textX, layout.coordsY, layout.textWidth);
+        ctx2.fillText(`📍 ${loc.coords || 'UBICACIÓN NO DISPONIBLE'}`, panelX + 30 * s, layout.coordsY);
 
         ctx2.fillStyle = 'white';
         ctx2.font = `bold ${layout.fontAddress}px "JetBrains Mono", monospace`;
         const placeLine = [loc.address, loc.city].filter(Boolean).join(', ') || 'DIRECCIÓN NO REGISTRADA';
-        // Limitar ancho de dirección para no invadir columna derecha
-        ctx2.fillText(placeLine, layout.textX, layout.addressY, layout.textWidth);
+        ctx2.fillText(placeLine, panelX + 30 * s, layout.addressY);
 
         // Actividad de ronda en curso: se graba en la propia foto.
-        // Las actividades se dibujan en la columna derecha, separadas del logo.
-        if (taskLine && layout.taskY !== null) {
-          ctx2.fillStyle = '#ffb95f';
-          ctx2.font = `bold ${layout.fontTask}px "JetBrains Mono", monospace`;
-          // Se obtienen las etiquetas de actividad (se usa roundTaskLabels para evitar
-          // el sufijo +N embebido en taskLine al haber más de 3 actividades)
-          const activityLabels = roundTaskLabels(taskIds);
-          // Calcula la posición inicial para centrar el grupo verticalmente
-          const startY = layout.columnTaskY - (layout.columnTaskFontTask * 1.4 + 8) * (activityLabels.length - 1) / 2;
-          activityLabels.forEach((label, index) => {
-            const lineY = startY + index * (layout.columnTaskFontTask * 1.4 + 8);
-            ctx2.fillText(`ACTIVIDAD: ${label}`, layout.columnTaskX, lineY, layout.columnTaskWidth);
-          });
-        }
+        // Bloque "ACTIVIDADES DE RONDA": fuera del panel, arriba a la derecha, solo las seleccionadas.
+        const activityItems = roundTaskItems(taskIds);
+        const activities = computeActivitiesLayout(canvas.width, canvas.height, layout, activityItems.length);
+        if (activities) drawActivitiesBlock(ctx2, activities, activityItems, s);
 
         ctx2.fillStyle = '#c6c6cd';
         ctx2.font = `${layout.fontTimestamp}px "JetBrains Mono", monospace`;
-        ctx2.fillText(`TIMESTAMP: ${loc.timestamp.slice(0, 16)}`, layout.textX, layout.timestampY, layout.textWidth);
+        ctx2.fillText(`TIMESTAMP: ${loc.timestamp.slice(0, 16)}`, panelX + 30 * s, layout.timestampY);
 
         if (logoImg) {
           const logoSize = layout.logoSize;
@@ -520,13 +501,13 @@ export default function App() {
           ctx2.fillStyle = '#ffb95f';
           ctx2.font = `bold ${layout.fontVerified}px "JetBrains Mono", monospace`;
           ctx2.textAlign = 'right';
-          ctx2.fillText('VERIFICADO', layout.verifiedX, layout.verifiedY);
+          ctx2.fillText('VERIFICADO', logoX - 25 * s, layout.verifiedY);
           ctx2.textAlign = 'left';
         } else {
           ctx2.fillStyle = '#ffb95f';
           ctx2.font = `bold ${layout.fontVerified}px "JetBrains Mono", monospace`;
           ctx2.textAlign = 'right';
-          ctx2.fillText('VERIFICADO', layout.verifiedX, layout.verifiedY);
+          ctx2.fillText('VERIFICADO', panelX + panelWidth - 30 * s, layout.verifiedY);
           ctx2.textAlign = 'left';
         }
 
@@ -709,11 +690,9 @@ export default function App() {
           const s = canvas.width / 1080;
 
           // Selección de actividades FIJADA al inicio del render (no se relee del ref aqui).
-          const taskLine = roundTasksWatermarkLine(taskIds);
           const layout = computeWatermarkLayout(canvas.width, canvas.height, {
-            hasTask: !!taskLine,
+            hasTask: false, // las actividades van fuera del panel (bloque aparte)
             hasLogo: !!logoImg,
-            activityColumn: true,
           });
           const { panelX, panelY, panelWidth, panelHeight } = layout;
 
@@ -725,46 +704,28 @@ export default function App() {
           ctx2.fill();
           ctx2.shadowBlur = 0;
 
-          // Separador vertical entre zona izquierda y columna de actividades
-          // columnTaskX es el inicio de la columna de actividades
-          ctx2.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-          ctx2.lineWidth = 1 * s;
-          ctx2.beginPath();
-          ctx2.moveTo(layout.columnX, panelY);
-          ctx2.lineTo(layout.columnX, panelY + panelHeight);
-          ctx2.stroke();
+          ctx2.fillStyle = '#ffb95f';
+          ctx2.fillRect(panelX, panelY, 6 * s, panelHeight);
 
           ctx2.textBaseline = 'alphabetic';
           ctx2.fillStyle = '#ffb95f';
           ctx2.font = `${layout.fontCoords}px sans-serif`;
-          // Limitar ancho de coordenadas para no invadir columna derecha
-          ctx2.fillText(`📍 ${loc.coords || 'UBICACIÓN NO DISPONIBLE'}`, layout.textX, layout.coordsY, layout.textWidth);
+          ctx2.fillText(`📍 ${loc.coords || 'UBICACIÓN NO DISPONIBLE'}`, panelX + 30 * s, layout.coordsY);
 
           ctx2.fillStyle = 'white';
           ctx2.font = `bold ${layout.fontAddress}px "JetBrains Mono", monospace`;
           const placeLine = [loc.address, loc.city].filter(Boolean).join(', ') || 'DIRECCIÓN NO REGISTRADA';
-          // Limitar ancho de dirección para no invadir columna derecha
-          ctx2.fillText(placeLine, layout.textX, layout.addressY, layout.textWidth);
+          ctx2.fillText(placeLine, panelX + 30 * s, layout.addressY);
 
           // Actividad de ronda en curso: se graba en la propia foto.
-          // Las actividades se dibujan en la columna derecha, separadas del logo.
-          if (taskLine && layout.taskY !== null) {
-            ctx2.fillStyle = '#ffb95f';
-            ctx2.font = `bold ${layout.fontTask}px "JetBrains Mono", monospace`;
-            // Se obtienen las etiquetas de actividad (se usa roundTaskLabels para evitar
-            // el sufijo +N embebido en taskLine al haber más de 3 actividades)
-            const activityLabels = roundTaskLabels(taskIds);
-            // Calcula la posición inicial para centrar el grupo verticalmente
-            const startY = layout.columnTaskY - (layout.columnTaskFontTask * 1.4 + 8) * (activityLabels.length - 1) / 2;
-            activityLabels.forEach((label, index) => {
-              const lineY = startY + index * (layout.columnTaskFontTask * 1.4 + 8);
-              ctx2.fillText(`ACTIVIDAD: ${label}`, layout.columnTaskX, lineY, layout.columnTaskWidth);
-            });
-          }
+          // Bloque "ACTIVIDADES DE RONDA": fuera del panel, arriba a la derecha, solo las seleccionadas.
+          const activityItems = roundTaskItems(taskIds);
+          const activities = computeActivitiesLayout(canvas.width, canvas.height, layout, activityItems.length);
+          if (activities) drawActivitiesBlock(ctx2, activities, activityItems, s);
 
           ctx2.fillStyle = '#c6c6cd';
           ctx2.font = `${layout.fontTimestamp}px "JetBrains Mono", monospace`;
-          ctx2.fillText(`TIMESTAMP: ${loc.timestamp.slice(0, 16)}`, layout.textX, layout.timestampY, layout.textWidth);
+          ctx2.fillText(`TIMESTAMP: ${loc.timestamp.slice(0, 16)}`, panelX + 30 * s, layout.timestampY);
 
           if (logoImg) {
             const logoSize = layout.logoSize;
@@ -792,13 +753,13 @@ export default function App() {
             ctx2.fillStyle = '#ffb95f';
             ctx2.font = `bold ${layout.fontVerified}px "JetBrains Mono", monospace`;
             ctx2.textAlign = 'right';
-            ctx2.fillText('VERIFICADO', layout.verifiedX, layout.verifiedY);
+            ctx2.fillText('VERIFICADO', logoX - 25 * s, layout.verifiedY);
             ctx2.textAlign = 'left';
           } else {
             ctx2.fillStyle = '#ffb95f';
             ctx2.font = `bold ${layout.fontVerified}px "JetBrains Mono", monospace`;
             ctx2.textAlign = 'right';
-            ctx2.fillText('VERIFICADO', layout.verifiedX, layout.verifiedY);
+            ctx2.fillText('VERIFICADO', panelX + panelWidth - 30 * s, layout.verifiedY);
             ctx2.textAlign = 'left';
           }
 

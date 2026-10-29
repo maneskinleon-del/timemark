@@ -78,6 +78,14 @@ export const roundTaskLabel = (taskId: string | null | undefined): string | null
 export const roundTaskLabels = (taskIds: readonly string[] | null | undefined): string[] =>
   normalizeTaskIds(taskIds ?? []).map(id => roundTaskLabel(id) as string);
 
+// Actividades seleccionadas con su descripcion (en orden de catalogo), para el bloque
+// "ACTIVIDADES DE RONDA" de la marca de agua.
+export const roundTaskItems = (taskIds: readonly string[] | null | undefined): { label: string; desc: string }[] =>
+  normalizeTaskIds(taskIds ?? []).map(id => {
+    const t = ROUND_TASKS.find(x => x.id === id) as RoundTask;
+    return { label: t.label, desc: t.desc };
+  });
+
 // Convierte un texto en un token seguro para nombres de archivo:
 // sin espacios, acentos ni caracteres problematicos.
 export const slugifyFileToken = (raw: string): string =>

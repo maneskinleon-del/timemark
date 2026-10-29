@@ -32,8 +32,8 @@ describe('H-01 - el redibujado de la marca de agua depende de las actividades', 
     // Dentro del render del panel NO se vuelve a leer el ref espejo.
     // La linea de actividades del panel se calcula con el parametro `taskIds`,
     // nunca con el ref espejo (que si puede cambiar a mitad del render).
-    expect(appSource).not.toContain('roundTasksWatermarkLine(roundTaskIdsRef.current)');
-    expect(appSource).toContain('roundTasksWatermarkLine(taskIds)');
+    expect(appSource).not.toContain('roundTaskItems(roundTaskIdsRef.current)');
+    expect(appSource).toContain('roundTaskItems(taskIds)');
   });
 
   it('renderWatermarkToDataURL recibe la seleccion como parametro', () => {
