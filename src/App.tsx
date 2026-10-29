@@ -99,7 +99,10 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [originalImage, setOriginalImage] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
-  const [logoImage, setLogoImage] = useState<string | null>(null);
+  const [logoImage, setLogoImage] = useState<string | null>(() => localStorage.getItem('timemark_logo'));
+  // Logo opcional: el usuario elige si el logo aparece en la marca de agua o no.
+  // Se persiste en localStorage; por defecto activo (comportamiento existente).
+  const [logoEnabled, setLogoEnabled] = useState<boolean>(() => localStorage.getItem('timemark_logo_enabled') !== 'false');
   // Ubicación: se inicializa desde localStorage si existe (sobrevive refresh/reapertura).
   const [mapCoords, setMapCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [logs, setLogs] = useState<Array<{id: number, img: string, time: string, address: string, task?: string, tasks?: string[]}>>([]);
@@ -142,7 +145,9 @@ export default function App() {
   useEffect(() => { locationRef.current = location; }, [location]);
 
   const logoImageRef = useRef<string | null>(null);
-  useEffect(() => { logoImageRef.current = logoImage; }, [logoImage]);
+  // Filtro único del logo opcional: si el usuario lo desactivó, ambas rutas de
+  // render (preview y lote) reciben null y la geometría se calcula sin logo.
+  useEffect(() => { logoImageRef.current = logoEnabled ? logoImage : null; }, [logoImage, logoEnabled]);
 
   const [settings, setSettings] = useState({
     strictDarkMode: true,
@@ -283,8 +288,7 @@ export default function App() {
 
   // Adquisición automática al montar: GPS solo si la fuente activa es GPS.
   useEffect(() => {
-    const savedLogo = localStorage.getItem('timemark_logo');
-    if (savedLogo) setLogoImage(savedLogo);
+    // El logo guardado se restaura en el inicializador de useState (logoImage).
 
     // Restaurar mapCoords y accuracy desde ubicación guardada
     const saved = loadLocation();
@@ -302,8 +306,8 @@ export default function App() {
     }
   }, [getCurrentLocation]);
 
-  // Redibujar SOLO cuando cambia logo, ubicación manualmente o la selección de
-  // actividades — con drawId NUEVO (cancela el dibujo en curso).
+  // Redibujar SOLO cuando cambia el logo (imagen o el toggle opcional), ubicación
+  // manualmente o la selección de actividades — con drawId NUEVO (cancela el dibujo en curso).
   // Si hay un batch procesándose, no interferir: el siguiente archivo de la cola ya usa la ubicación/logo/actividad actualizados.
   useEffect(() => {
     if (originalImage && !batchState.isProcessing) {
@@ -312,7 +316,7 @@ export default function App() {
     }
     // `roundTaskIds` forma parte de las dependencias: sin esto, cambiar de actividad
     // NO redibuja el preview y la foto compartida no lleva la linea ACTIVIDAD (H-01).
-  }, [logoImage, location.coords, location.address, roundTaskIds]);
+  }, [logoImage, logoEnabled, location.coords, location.address, roundTaskIds]);
 
   // Limpiar imágenes cuando termina el batch
   useEffect(() => {
@@ -1417,6 +1421,26 @@ export default function App() {
                     )}
                   </div>
                   <p className="text-on-surface-variant text-xs">PNG, JPG, WebP o GIF recomendados</p>
+
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={logoEnabled}
+                    aria-label="Incluir logo en la marca de agua"
+                    data-testid={logoEnabled ? 'logo-visible' : 'logo-hidden'}
+                    onClick={() => {
+                      const next = !logoEnabled;
+                      setLogoEnabled(next);
+                      localStorage.setItem('timemark_logo_enabled', String(next));
+                    }}
+                    disabled={isRendering}
+                    className="w-full flex items-center justify-between p-3 rounded-lg hover:bg-surface-container-high transition-colors cursor-pointer border border-outline-variant/30"
+                  >
+                    <span className="text-on-surface font-bold text-sm">Incluir logo en la marca de agua</span>
+                    <span className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${logoEnabled ? 'bg-secondary' : 'bg-surface-container-highest'}`}>
+                      <span className={`inline-block w-4 h-4 bg-white rounded-full transition-transform ${logoEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </span>
+                  </button>
 
                   <input type="file" accept="image/*" capture="environment" ref={fileInputRef} className="hidden" onChange={handleImageUpload} />
                   <input type="file" accept="image/*" multiple ref={galleryInputRef} className="hidden" onChange={handleImageUpload} />

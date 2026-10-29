@@ -124,3 +124,42 @@ describe('logActivities - normalizacion de actividades del registro', () => {
     expect(logActivities({ id: 1, img: '', time: '', address: '', tasks: [] })).toEqual([]);
   });
 });
+
+// --- Logo de Arcangeli Seguridad opcional -----------------------------------
+// La visibilidad del logo es una preferencia del usuario (por defecto activa)
+// persistida en `timemark_logo_enabled`. La parte de render (hasLogo en
+// computeWatermarkLayout y el bloque `if (logoImg)`) esta cubierta en
+// tests/watermarkGeometry.test.ts.
+describe('App - logo opcional en la marca de agua', () => {
+  it('muestra el logo POR DEFECTO cuando no hay preferencia persistida', () => {
+    const html = renderToStaticMarkup(React.createElement(App));
+    expect(html).toContain('data-testid="logo-visible"');
+    expect(html).not.toContain('data-testid="logo-hidden"');
+  });
+
+  it('respeta la preferencia guardada en `false` (logo desactivado)', () => {
+    localStorage.setItem('timemark_logo_enabled', 'false');
+    const html = renderToStaticMarkup(React.createElement(App));
+    expect(html).toContain('data-testid="logo-hidden"');
+    expect(html).not.toContain('data-testid="logo-visible"');
+  });
+
+  it('respeta la preferencia guardada en `true` (logo activado)', () => {
+    localStorage.setItem('timemark_logo_enabled', 'true');
+    const html = renderToStaticMarkup(React.createElement(App));
+    expect(html).toContain('data-testid="logo-visible"');
+    expect(html).not.toContain('data-testid="logo-hidden"');
+  });
+
+  it('cae al valor por defecto ante una clave corrupta', () => {
+    localStorage.setItem('timemark_logo_enabled', 'no-es-un-booleano');
+    const html = renderToStaticMarkup(React.createElement(App));
+    expect(html).toContain('data-testid="logo-visible"');
+    expect(html).not.toContain('data-testid="logo-hidden"');
+  });
+
+  it('expone la opcion como control accesible descrito por `aria-label`', () => {
+    const html = renderToStaticMarkup(React.createElement(App));
+    expect(html).toContain('aria-label="Incluir logo en la marca de agua"');
+  });
+});
