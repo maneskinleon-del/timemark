@@ -1264,7 +1264,7 @@ export default function App() {
                         title="Current Location"
                         width="100%" height="100%" frameBorder="0" scrolling="no" marginHeight={0} marginWidth={0}
                         src={`https://maps.google.com/maps?q=${mapCoords.lat},${mapCoords.lng}&z=15&output=embed`}
-                        style={{ border: 0, filter: 'grayscale(0.3) brightness(0.9)' }}
+                        style={{ border: 0 }}
                       />
                     ) : (
                       <span className="text-on-surface-variant text-xs">Ubicación no disponible</span>
@@ -1577,7 +1577,7 @@ export default function App() {
                   title="Operational Map"
                   width="100%" height="100%" frameBorder="0" scrolling="no" marginHeight={0} marginWidth={0}
                   src={`https://maps.google.com/maps?q=${mapCoords.lat},${mapCoords.lng}&z=15&output=embed`}
-                  style={{ border: 0, filter: 'grayscale(0.3) brightness(0.9)', position: 'absolute', inset: 0 }}
+                  style={{ border: 0, position: 'absolute', inset: 0 }}
                 />
               ) : (
                 <div className="absolute inset-0 flex items-center justify-center text-on-surface-variant text-sm">Ubicación no disponible</div>
